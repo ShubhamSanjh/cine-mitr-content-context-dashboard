@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir D:\\\\CineMitr\\\\CodeBase\\\\New folder\\\\cine-mitr-content-context-dashboard:*)",
+      "Bash(git -C \"D:/CineMitr/CodeBase/New folder/cine-mitr-content-context-dashboard\" status)"
+    ]
+  }
+}

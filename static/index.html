@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Content Dashboard</title>
+    <title>Content Dashboard v2</title>
     <link rel="stylesheet" href="/static/css/style.css" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -14,7 +14,7 @@
 <!-- ==================== SIDEBAR ==================== -->
 <aside class="sidebar">
     <div class="sidebar-header">
-        <h1>Content Dashboard</h1>
+        <h1>Content Dashboard v2</h1>
         <span class="env-badge" id="envBadge">DEV</span>
     </div>
     <nav class="sidebar-nav">
@@ -28,7 +28,7 @@
             <span class="icon">🔗</span> Link Content
         </div>
         <div class="nav-item" data-page="status-tracking">
-            <span class="icon">📋</span> Status Tracking
+            <span class="icon">📋</span> Content Ideas & Status
         </div>
         <div class="nav-item" data-page="status-mgmt">
             <span class="icon">🏷️</span> Status Management
@@ -39,8 +39,18 @@
             <span class="icon">🎬</span> Media
         </div>
 
+        <div class="nav-section">Calendar</div>
+        <div class="nav-item" data-page="content-calendar">
+            <span class="icon">📅</span> Content Calendar
+        </div>
+
+        <div class="nav-section">Reminders</div>
+        <div class="nav-item" data-page="reminders">
+            <span class="icon">🔔</span> Reminders
+        </div>
+
         <div class="nav-section">Analytics</div>
-        <div class="nav-item" data-page="analytics">
+        <div class="nav-item" data-page="analytics" id="navAnalytics">
             <span class="icon">📈</span> Analytics
         </div>
         <div class="nav-item" data-page="reports">
@@ -60,7 +70,7 @@
             <span class="icon">📘</span> API Docs
         </div>
     </nav>
-    <div class="sidebar-footer">v2.4.0 &middot; Content Dashboard</div>
+    <div class="sidebar-footer">v4.0.0 &middot; Content Dashboard v2</div>
 </aside>
 
 <!-- ==================== MAIN CONTENT ==================== -->
@@ -90,6 +100,7 @@
                 <option value="status">Status Only</option>
             </select>
             <button class="btn-outline" onclick="loadDashboard()">↻ Refresh</button>
+            <button class="btn-outline" onclick="exportFullExcel()">📥 Full Export</button>
         </div>
         <div class="stats-row" id="dashboardStats"></div>
         <div class="charts-row">
@@ -122,6 +133,7 @@
                 <option value="music">Music</option>
             </select>
             <input type="text" class="search-input" id="mediaSearchInput" placeholder="🔍 Search by name..." onkeyup="handleMediaSearch(event)" style="width:200px" />
+            <input type="text" class="search-input" id="mediaTagsFilter" placeholder="🏷️ Filter by tag..." onkeyup="handleMediaSearch(event)" style="width:150px" />
             <button class="btn-outline" onclick="exportExcel('media')">📥 Export Excel</button>
             <button class="btn-outline" onclick="downloadTemplate('media')">📄 Template</button>
             <label class="btn-outline" style="cursor:pointer;display:inline-block;padding:6px 14px;font-size:.85rem">
@@ -139,6 +151,7 @@
         <div class="page-actions">
             <button class="btn-primary" onclick="openLinkModal()">+ Add Link</button>
             <input type="text" class="search-input" id="linkSearchInput" placeholder="🔍 Search links..." onkeyup="handleLinkSearch(event)" style="width:200px" />
+            <input type="text" class="search-input" id="linkTagsFilter" placeholder="🏷️ Filter by tag..." onkeyup="handleLinkSearch(event)" style="width:150px" />
             <select id="linkStatusFilter" onchange="loadLinks()">
                 <option value="">All Status</option>
                 <option value="active">Active</option>
@@ -164,7 +177,7 @@
         </div>
     </div>
 
-    <!-- Page: Status Tracking -->
+    <!-- Page: Content Ideas and Status -->
     <div class="content-area" id="page-status-tracking" style="display:none;">
         <div class="page-actions">
             <button class="btn-primary" onclick="openStatusModal()">+ Add Status</button>
@@ -177,9 +190,9 @@
             </select>
             <select id="statusStatusFilter" onchange="loadStatuses()">
                 <option value="">All Statuses</option>
-                <!-- Dynamically populated from status definitions API -->
             </select>
             <input type="text" class="search-input" id="statusSearchInput" placeholder="🔍 Search by media name..." onkeyup="handleStatusSearch(event)" style="width:200px" />
+            <input type="text" class="search-input" id="statusTagsFilter" placeholder="🏷️ Filter by tag..." onkeyup="handleStatusSearch(event)" style="width:150px" />
             <button class="btn-outline" onclick="exportExcel('status')">📥 Export Excel</button>
             <button class="btn-outline" onclick="downloadTemplate('status')">📄 Template</button>
             <label class="btn-outline" style="cursor:pointer;display:inline-block;padding:6px 14px;font-size:.85rem">
@@ -187,7 +200,7 @@
             </label>
         </div>
         <div class="card">
-            <div class="card-header"><h3>Status Tracking</h3><button class="btn-outline" onclick="loadStatuses()">↻ Refresh</button></div>
+            <div class="card-header"><h3>Content Ideas & Status</h3><button class="btn-outline" onclick="loadStatuses()">↻ Refresh</button></div>
             <div id="statusTable"></div>
         </div>
     </div>
@@ -204,16 +217,56 @@
         </div>
     </div>
 
-    <!-- Page: Analytics (New) -->
+    <!-- Page: Content Calendar -->
+    <div class="content-area" id="page-content-calendar" style="display:none;">
+        <div class="page-actions">
+            <button class="btn-outline" onclick="prevContentCalMonth()">&lt; Prev</button>
+            <h3 id="contentCalendarTitle" style="margin:0 16px;display:inline"></h3>
+            <button class="btn-outline" onclick="nextContentCalMonth()">Next &gt;</button>
+        </div>
+        <div class="card" style="margin-top:12px;">
+            <div id="contentCalendarGrid" class="calendar-grid" style="min-height:400px;"></div>
+        </div>
+        <div class="card" style="margin-top:12px;">
+            <div class="card-header"><h3>Events This Month</h3></div>
+            <div id="contentCalendarEvents"></div>
+        </div>
+    </div>
+
+    <!-- Page: Reminders -->
+    <div class="content-area" id="page-reminders" style="display:none;">
+        <div class="page-actions">
+            <button class="btn-primary" onclick="openReminderModal()">+ Add Reminder</button>
+            <label style="font-size:.85rem;display:flex;align-items:center;gap:6px;cursor:pointer">
+                <input type="checkbox" id="reminderUpcoming" onchange="loadReminders()" style="width:auto" /> Upcoming only
+            </label>
+        </div>
+        <div class="card">
+            <div class="card-header"><h3>Reminders</h3><button class="btn-outline" onclick="loadReminders()">↻ Refresh</button></div>
+            <div id="remindersTable"></div>
+        </div>
+    </div>
+
+    <!-- Page: Analytics (Dynamic) -->
     <div class="content-area" id="page-analytics" style="display:none;">
+        <div class="page-actions">
+            <select id="analyticsCategory" onchange="loadAnalytics()">
+                <option value="">All Categories</option>
+                <option value="movies">Movies</option>
+                <option value="webseries">Web Series</option>
+                <option value="shows">Shows</option>
+                <option value="music">Music</option>
+            </select>
+            <button class="btn-outline" onclick="loadAnalytics()">↻ Refresh</button>
+        </div>
         <div class="stats-row" id="analyticsStats"></div>
         <div class="charts-row">
             <div class="card chart-card">
-                <div class="card-header"><h3>Media Trends by Category</h3></div>
-                <div class="chart-container"><canvas id="analyticsCategoryChart"></canvas></div>
+                <div class="card-header"><h3>Tag Distribution</h3></div>
+                <div class="chart-container"><canvas id="analyticsTagChart"></canvas></div>
             </div>
             <div class="card chart-card">
-                <div class="card-header"><h3>Rating Distribution</h3></div>
+                <div class="card-header"><h3>Top Rated Media</h3></div>
                 <div class="chart-container"><canvas id="analyticsRatingChart"></canvas></div>
             </div>
         </div>
@@ -223,9 +276,13 @@
                 <div class="chart-container"><canvas id="analyticsPlatformChart"></canvas></div>
             </div>
             <div class="card chart-card">
-                <div class="card-header"><h3>Status Flow</h3></div>
+                <div class="card-header"><h3>Status Distribution</h3></div>
                 <div class="chart-container"><canvas id="analyticsStatusFlowChart"></canvas></div>
             </div>
+        </div>
+        <div class="card" style="margin-top:16px;">
+            <div class="card-header"><h3>Most Linked Media</h3></div>
+            <div id="analyticsMostLinked"></div>
         </div>
     </div>
 
@@ -369,6 +426,10 @@
                 <input type="text" id="fCast" placeholder="Actor 1, Actor 2, ..." />
             </div>
             <div class="form-group">
+                <label>Tags <small>(comma-separated)</small></label>
+                <input type="text" id="fMediaTags" placeholder="e.g. sci-fi, must-watch, nolan" />
+            </div>
+            <div class="form-group">
                 <label>Review</label>
                 <textarea id="fReview" placeholder="Your review..."></textarea>
             </div>
@@ -445,6 +506,10 @@
                     <input type="text" id="fLinkDesc" placeholder="Brief description" />
                 </div>
             </div>
+            <div class="form-group">
+                <label>Tags <small>(comma-separated)</small></label>
+                <input type="text" id="fLinkTags" placeholder="e.g. trailer, official" />
+            </div>
         </div>
         <div class="modal-footer">
             <button class="btn-outline" onclick="closeLinkModal()">Cancel</button>
@@ -477,8 +542,11 @@
             <div class="form-group">
                 <label>Status *</label>
                 <select id="fStatusValue">
-                    <!-- Dynamically populated from status definitions API -->
                 </select>
+            </div>
+            <div class="form-group">
+                <label>Tags <small>(comma-separated)</small></label>
+                <input type="text" id="fStatusTags" placeholder="e.g. priority, urgent" />
             </div>
             <div class="form-group">
                 <label>Notes</label>
@@ -543,10 +611,63 @@
                     </select>
                 </div>
             </div>
+            <div class="form-group">
+                <label>Tags <small>(comma-separated)</small></label>
+                <input type="text" id="fTaskTags" placeholder="e.g. review, urgent" />
+            </div>
+            <div class="form-group">
+                <label>Reminder Date/Time</label>
+                <input type="datetime-local" id="fTaskReminder" />
+            </div>
         </div>
         <div class="modal-footer">
             <button class="btn-outline" onclick="closeTaskModal()">Cancel</button>
             <button class="btn-primary" onclick="saveTask()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== REMINDER MODAL ==================== -->
+<div class="modal-overlay" id="reminderModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="reminderModalTitle">Add Reminder</h3>
+            <button class="modal-close" onclick="closeReminderModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="reminderEditId" />
+            <div class="form-group">
+                <label>Title *</label>
+                <input type="text" id="fReminderTitle" placeholder="Reminder title" />
+            </div>
+            <div class="form-group">
+                <label>Reminder Date/Time *</label>
+                <input type="datetime-local" id="fReminderDate" />
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Type</label>
+                    <select id="fReminderType">
+                        <option value="deadline">Deadline</option>
+                        <option value="publication">Publication</option>
+                        <option value="custom">Custom</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Media <small>(optional)</small></label>
+                    <select id="fReminderMediaId">
+                        <option value="">-- None --</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Message</label>
+                <textarea id="fReminderMessage" placeholder="Reminder details..."></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-outline" onclick="closeReminderModal()">Cancel</button>
+            <button class="btn-primary" onclick="saveReminder()">Save</button>
         </div>
     </div>
 </div>
@@ -576,7 +697,7 @@
                     <select id="fStatusDefContext">
                         <option value="all">All (Links + Status)</option>
                         <option value="links">Links Only</option>
-                        <option value="status_tracking">Status Tracking Only</option>
+                        <option value="status_tracking">Content Ideas & Status Only</option>
                     </select>
                 </div>
                 <div class="form-group">

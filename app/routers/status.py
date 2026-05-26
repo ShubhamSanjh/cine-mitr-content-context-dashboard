@@ -1,5 +1,5 @@
 """
-Media Status Tracking API endpoints.
+Content Ideas and Status API endpoints.
 Manages status updates (reviewed, proceed, stopped, in_progress, revived, etc.)
 Validates statuses dynamically against the status_definitions table.
 """
@@ -52,24 +52,48 @@ def create_status(payload: MediaStatusCreate, db: Session = Depends(get_db)):
     return record
 
 
+# ---------- DUPLICATE ----------
+@router.post("/{status_id}/duplicate", response_model=MediaStatusResponse, status_code=201, summary="Duplicate a status entry")
+def duplicate_status(status_id: int, db: Session = Depends(get_db)):
+    """Duplicate an existing status entry so it can be edited independently."""
+    original = db.query(MediaStatus).filter(MediaStatus.id == status_id).first()
+    if not original:
+        raise HTTPException(status_code=404, detail="Status record not found")
+
+    new_record = MediaStatus(
+        media_id=original.media_id,
+        status=original.status,
+        notes=original.notes,
+        tags=original.tags,
+        updated_by=original.updated_by,
+    )
+    db.add(new_record)
+    db.commit()
+    db.refresh(new_record)
+    return new_record
+
+
 # ---------- LIST by Media ----------
 @router.get("/by-media/{media_id}", response_model=List[MediaStatusResponse], summary="Get statuses for media")
 def get_statuses_by_media(media_id: int, db: Session = Depends(get_db)):
     """Get all status entries for a specific media item."""
-    return db.query(MediaStatus).filter(MediaStatus.media_id == media_id).order_by(MediaStatus.created_at.desc()).all()
+    return db.query(MediaStatus).filter(MediaStatus.media_id == media_id).order_by(MediaStatus.updated_at.desc()).all()
 
 
 # ---------- LIST all ----------
 @router.get("/", response_model=List[MediaStatusResponse], summary="List all media statuses")
 def list_statuses(
     status: str | None = Query(None, description="Filter by status"),
+    tags: str | None = Query(None, description="Filter by tags"),
     db: Session = Depends(get_db),
 ):
-    """List all media status records with optional status filter."""
+    """List all media status records with optional status and tags filter. Sorted by updated_at desc."""
     query = db.query(MediaStatus)
     if status:
         query = query.filter(MediaStatus.status == status)
-    return query.order_by(MediaStatus.created_at.desc()).all()
+    if tags:
+        query = query.filter(MediaStatus.tags.ilike(f"%{tags}%"))
+    return query.order_by(MediaStatus.updated_at.desc()).all()
 
 
 # ---------- GET valid statuses ----------

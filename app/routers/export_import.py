@@ -86,12 +86,12 @@ def export_media_excel(
     query = db.query(MediaContent)
     if media_category:
         query = query.filter(MediaContent.media_category == media_category)
-    items = query.order_by(MediaContent.created_at.desc()).all()
+    items = query.order_by(MediaContent.updated_at.desc()).all()
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Media"
-    headers = ["ID", "Category", "Name", "Release Date", "Genre", "Director", "Cast", "Rating", "Review", "Is Available", "Available On", "Created At"]
+    headers = ["ID", "Category", "Name", "Release Date", "Genre", "Director", "Cast", "Rating", "Review", "Tags", "Is Available", "Available On", "Created At"]
     style_header(ws, headers)
 
     for row, m in enumerate(items, 2):
@@ -104,9 +104,10 @@ def export_media_excel(
         ws.cell(row=row, column=7, value=m.cast_members or "")
         ws.cell(row=row, column=8, value=m.rating)
         ws.cell(row=row, column=9, value=m.review or "")
-        ws.cell(row=row, column=10, value=m.is_available or "false")
-        ws.cell(row=row, column=11, value=m.available_on or "")
-        ws.cell(row=row, column=12, value=str(m.created_at) if m.created_at else "")
+        ws.cell(row=row, column=10, value=m.tags or "")
+        ws.cell(row=row, column=11, value=m.is_available or "false")
+        ws.cell(row=row, column=12, value=m.available_on or "")
+        ws.cell(row=row, column=13, value=str(m.created_at) if m.created_at else "")
 
     auto_width(ws)
     return workbook_to_response(wb, f"media_export_{datetime.now().strftime('%Y%m%d')}.xlsx")
@@ -261,6 +262,14 @@ async def import_media_excel(file: UploadFile = File(...), db: Session = Depends
                 errors.append(f"Row {i}: media_name is required")
                 continue
 
+            # Skip duplicates by name (case-insensitive)
+            existing = db.query(MediaContent).filter(
+                MediaContent.media_name.ilike(name)
+            ).first()
+            if existing:
+                errors.append(f"Row {i}: Media '{name}' already exists (id={existing.id}), skipped")
+                continue
+
             record = MediaContent(
                 media_category=category,
                 media_name=name,
@@ -319,6 +328,15 @@ async def import_links_excel(file: UploadFile = File(...), db: Session = Depends
                 link_status=str(row[4]).strip().lower() if len(row) > 4 and row[4] else "active",
                 link_category=media.media_category,
             )
+
+            # Skip duplicate URLs
+            existing_link = db.query(MediaLink).filter(
+                MediaLink.url == record.url
+            ).first()
+            if existing_link:
+                errors.append(f"Row {i}: Link URL already exists (link_id={existing_link.id}), skipped")
+                continue
+
             db.add(record)
             created += 1
         except Exception as e:
@@ -367,4 +385,74 @@ async def import_status_excel(file: UploadFile = File(...), db: Session = Depend
 
     db.commit()
     return {"message": f"Imported {created} status entries", "created": created, "errors": errors}
+
+
+# ==================== FULL EXPORT (Category + Tags tabs) ====================
+
+@router.get("/export/full", summary="Export all data with category tabs and tags sheet")
+def export_full_excel(db: Session = Depends(get_db)):
+    """Export all media in a workbook with separate sheets per category + a Tags summary sheet."""
+    all_media = db.query(MediaContent).order_by(MediaContent.updated_at.desc()).all()
+
+    wb = Workbook()
+    wb.remove(wb.active)  # Remove default sheet
+
+    # Group by category
+    categories = {}
+    for m in all_media:
+        categories.setdefault(m.media_category, []).append(m)
+
+    headers = ["ID", "Name", "Release Date", "Genre", "Director", "Cast", "Rating", "Review", "Tags", "Is Available", "Available On", "Updated At"]
+
+    for cat, items in categories.items():
+        ws = wb.create_sheet(title=cat.capitalize()[:31])
+        style_header(ws, headers)
+        for row, m in enumerate(items, 2):
+            ws.cell(row=row, column=1, value=m.id)
+            ws.cell(row=row, column=2, value=m.media_name)
+            ws.cell(row=row, column=3, value=str(m.release_date) if m.release_date else "")
+            ws.cell(row=row, column=4, value=m.genre or "")
+            ws.cell(row=row, column=5, value=m.director or "")
+            ws.cell(row=row, column=6, value=m.cast_members or "")
+            ws.cell(row=row, column=7, value=m.rating)
+            ws.cell(row=row, column=8, value=m.review or "")
+            ws.cell(row=row, column=9, value=m.tags or "")
+            ws.cell(row=row, column=10, value=m.is_available or "false")
+            ws.cell(row=row, column=11, value=m.available_on or "")
+            ws.cell(row=row, column=12, value=str(m.updated_at) if m.updated_at else "")
+        auto_width(ws)
+
+    # Tags summary sheet
+    tag_counts = {}
+    for m in all_media:
+        if m.tags:
+            for tag in m.tags.split(","):
+                tag = tag.strip()
+                if tag:
+                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
+
+    ws_tags = wb.create_sheet(title="Tags")
+    tag_headers = ["Tag", "Count", "Media Names"]
+    style_header(ws_tags, tag_headers)
+
+    # Build tag -> media names mapping
+    tag_media = {}
+    for m in all_media:
+        if m.tags:
+            for tag in m.tags.split(","):
+                tag = tag.strip()
+                if tag:
+                    tag_media.setdefault(tag, []).append(m.media_name)
+
+    sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)
+    for row, (tag, count) in enumerate(sorted_tags, 2):
+        ws_tags.cell(row=row, column=1, value=tag)
+        ws_tags.cell(row=row, column=2, value=count)
+        ws_tags.cell(row=row, column=3, value=", ".join(tag_media.get(tag, [])))
+    auto_width(ws_tags)
+
+    if not wb.sheetnames:
+        wb.create_sheet(title="Empty")
+
+    return workbook_to_response(wb, f"full_export_{datetime.now().strftime('%Y%m%d')}.xlsx")
 

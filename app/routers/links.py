@@ -26,10 +26,20 @@ router = APIRouter(prefix="/media-links")
 # ---------- CREATE ----------
 @router.post("/", response_model=MediaLinkResponse, status_code=201, summary="Create media link")
 def create_link(payload: MediaLinkCreate, db: Session = Depends(get_db)):
-    """Link an external URL (YouTube, Instagram, Twitter, etc.) to a media item."""
+    """Link an external URL (YouTube, Instagram, Twitter, etc.) to a media item. Rejects duplicate URLs for the same media."""
     media = db.query(MediaContent).filter(MediaContent.id == payload.media_id).first()
     if not media:
         raise HTTPException(status_code=404, detail="Media content not found")
+
+    # Check for duplicate link (URL must be globally unique)
+    existing = db.query(MediaLink).filter(
+        MediaLink.url == payload.url
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A link with this URL already exists (link_id={existing.id}, media_id={existing.media_id})"
+        )
 
     # Auto-fill link_category from media category if not provided
     data = payload.model_dump()
@@ -49,10 +59,11 @@ def list_links(
     platform: str | None = Query(None, description="Filter by platform"),
     link_status: str | None = Query(None, description="Filter by link status (active/inactive)"),
     link_category: str | None = Query(None, description="Filter by link category"),
+    tags: str | None = Query(None, description="Filter by tags (partial match)"),
     search: str | None = Query(None, description="Search by media name or URL"),
     db: Session = Depends(get_db),
 ):
-    """List all media links with optional filters and search."""
+    """List all media links with optional filters, tags search, and text search."""
     query = db.query(MediaLink)
     if platform:
         query = query.filter(MediaLink.platform == platform)
@@ -60,6 +71,8 @@ def list_links(
         query = query.filter(MediaLink.link_status == link_status)
     if link_category:
         query = query.filter(MediaLink.link_category == link_category)
+    if tags:
+        query = query.filter(MediaLink.tags.ilike(f"%{tags}%"))
     if search:
         # Search by URL or join with media name
         media_ids = [

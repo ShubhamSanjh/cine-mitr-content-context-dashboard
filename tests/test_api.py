@@ -277,18 +277,18 @@ def test_delete_status():
 def test_ui_has_dynamic_status_dropdown():
     """UI should have dynamically populated status dropdown."""
     res = client.get("/")
-    assert "Dynamically populated from status definitions API" in res.text
+    assert 'id="fStatusValue"' in res.text
 
 
 def test_ui_version():
     res = client.get("/")
-    assert "v2.4.0" in res.text
+    assert "v3.0.0" in res.text
 
 
 def test_ui_analytics_page_exists():
     res = client.get("/")
     assert 'id="page-analytics"' in res.text
-    assert 'id="analyticsCategoryChart"' in res.text
+    assert 'id="analyticsTagChart"' in res.text
 
 
 def test_ui_status_mgmt_page_exists():
@@ -498,5 +498,5 @@ def test_ui_has_export_buttons():
 
 def test_ui_version_2_4():
     res = client.get("/")
-    assert "v2.4.0" in res.text
+    assert "v3.0.0" in res.text
 

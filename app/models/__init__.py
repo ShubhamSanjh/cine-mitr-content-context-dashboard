@@ -4,7 +4,7 @@ so that Base.metadata.create_all() picks them up.
 """
 
 from app.models.content import Content
-from app.models.media import MediaContent, MediaLink, MediaStatus, TodoTask
+from app.models.media import MediaContent, MediaLink, MediaStatus, TodoTask, Reminder, StatusDefinition
 
 __all__ = [
     "Content",
@@ -12,4 +12,6 @@ __all__ = [
     "MediaLink",
     "MediaStatus",
     "TodoTask",
+    "Reminder",
+    "StatusDefinition",
 ]

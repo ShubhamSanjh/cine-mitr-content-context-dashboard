@@ -36,6 +36,7 @@ def list_contents(
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
     category: str | None = Query(None, description="Filter by category"),
     status: str | None = Query(None, description="Filter by status"),
+    tags: str | None = Query(None, description="Filter by tags"),
     db: Session = Depends(get_db),
 ):
     query = db.query(Content)
@@ -43,9 +44,11 @@ def list_contents(
         query = query.filter(Content.category == category)
     if status:
         query = query.filter(Content.status == status)
+    if tags:
+        query = query.filter(Content.tags.ilike(f"%{tags}%"))
 
     total = query.count()
-    items = query.order_by(Content.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    items = query.order_by(Content.updated_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
 
     return PaginatedResponse(
         items=items,

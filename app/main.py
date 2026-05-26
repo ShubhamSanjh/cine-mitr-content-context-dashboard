@@ -17,10 +17,11 @@ import os
 from app.config import get_settings
 from app.database import engine, Base
 from app.routers import content, health, media, links, status, tasks, dashboard, status_definitions, export_import
+from app.routers import reminders, calendar as calendar_router, analytics
 
 # Import all models so Base.metadata knows about them
 from app.models import MediaContent, MediaLink, MediaStatus, TodoTask  # noqa: F401
-from app.models.media import StatusDefinition  # noqa: F401
+from app.models.media import StatusDefinition, Reminder  # noqa: F401
 
 settings = get_settings()
 
@@ -55,7 +56,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
-    description="Content Dashboard — A comprehensive media content management and analytics platform.",
+    description="Content Dashboard v2 — A comprehensive media content management and analytics platform with enhanced tagging, content ideas tracking, and improved organization.",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
@@ -128,11 +129,17 @@ app.include_router(health.router, prefix=settings.API_PREFIX, tags=["Health"])
 app.include_router(content.router, prefix=settings.API_PREFIX, tags=["Content"])
 app.include_router(media.router, prefix=settings.API_PREFIX, tags=["Media"])
 app.include_router(links.router, prefix=settings.API_PREFIX, tags=["Links"])
-app.include_router(status.router, prefix=settings.API_PREFIX, tags=["Status"])
+app.include_router(status.router, prefix=settings.API_PREFIX, tags=["Content Ideas & Status"])
 app.include_router(tasks.router, prefix=settings.API_PREFIX, tags=["Tasks"])
 app.include_router(dashboard.router, prefix=settings.API_PREFIX, tags=["Dashboard"])
 app.include_router(status_definitions.router, prefix=settings.API_PREFIX, tags=["Status Definitions"])
 app.include_router(export_import.router, prefix=settings.API_PREFIX, tags=["Excel Export/Import"])
+app.include_router(reminders.router, prefix=settings.API_PREFIX, tags=["Reminders"])
+app.include_router(calendar_router.router, prefix=settings.API_PREFIX, tags=["Calendar"])
+
+# Conditionally register analytics dashboard
+if settings.ANALYTICS_ENABLED:
+    app.include_router(analytics.router, prefix=settings.API_PREFIX, tags=["Analytics"])
 
 # --- Serve static UI ---
 static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")

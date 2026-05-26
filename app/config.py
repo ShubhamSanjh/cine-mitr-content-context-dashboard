@@ -10,13 +10,16 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # --- Application ---
-    APP_NAME: str = "Content-Dashboard"
-    APP_VERSION: str = "2.4.0"
+    APP_NAME: str = "Content-Dashboard v2"
+    APP_VERSION: str = "4.0.0"
     APP_ENV: str = "development"  # development | staging | production
     DEBUG: bool = True
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     WORKERS: int = 1  # Gunicorn workers (production: 2*CPU+1)
+
+    # --- Feature Flags ---
+    ANALYTICS_ENABLED: bool = True  # Show/hide analytics dashboard
 
     # --- Security ---
     SECRET_KEY: str = "change-me-in-production"  # Override via env var in production

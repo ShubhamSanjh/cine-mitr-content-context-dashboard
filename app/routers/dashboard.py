@@ -19,6 +19,18 @@ from app.schemas.media import DashboardStats, ReportResponse, MediaContentRespon
 router = APIRouter(prefix="/dashboard")
 
 
+def _get_tag_distribution(media_items):
+    """Build tag frequency map from media items."""
+    tag_counts = {}
+    for m in media_items:
+        if m.tags:
+            for tag in m.tags.split(","):
+                tag = tag.strip().lower()
+                if tag:
+                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
+    return tag_counts
+
+
 # ---------- DASHBOARD STATS ----------
 @router.get("/stats", response_model=DashboardStats, summary="Get dashboard statistics")
 def get_dashboard_stats(
@@ -67,6 +79,7 @@ def get_dashboard_stats(
         total_tasks=total_tasks,
         status_distribution=status_distribution,
         category_distribution=category_distribution,
+        tag_distribution=_get_tag_distribution(base_query.all()),
     )
 
 
@@ -96,7 +109,7 @@ def generate_report(
         ]
         query = query.filter(MediaContent.id.in_(media_ids))
 
-    items = query.order_by(MediaContent.created_at.desc()).all()
+    items = query.order_by(MediaContent.updated_at.desc()).all()
 
     # Aggregations
     by_category = {}
@@ -146,7 +159,7 @@ def export_csv(
     if media_category:
         query = query.filter(MediaContent.media_category == media_category)
 
-    items = query.order_by(MediaContent.created_at.desc()).all()
+    items = query.order_by(MediaContent.updated_at.desc()).all()
 
     output = io.StringIO()
     writer = csv.writer(output)

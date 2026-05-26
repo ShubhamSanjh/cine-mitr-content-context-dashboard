@@ -12,7 +12,9 @@ class ContentBase(BaseModel):
     category: str = Field(..., min_length=1, max_length=100, examples=["reports"])
     description: Optional[str] = Field(None, examples=["A quarterly report summary."])
     status: Optional[str] = Field("active", examples=["active"])
+    tags: Optional[str] = Field(None, max_length=500, examples=["quarterly, finance"])
     is_published: Optional[bool] = Field(False)
+    publication_date: Optional[datetime] = Field(None, examples=["2026-06-01T09:00:00Z"])
 
 
 class ContentCreate(ContentBase):
@@ -24,7 +26,9 @@ class ContentUpdate(BaseModel):
     category: Optional[str] = Field(None, min_length=1, max_length=100)
     description: Optional[str] = None
     status: Optional[str] = None
+    tags: Optional[str] = None
     is_published: Optional[bool] = None
+    publication_date: Optional[datetime] = None
 
 
 class ContentResponse(ContentBase):

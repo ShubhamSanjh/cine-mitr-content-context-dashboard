@@ -22,9 +22,20 @@ router = APIRouter(prefix="/media")
 # ---------- CREATE ----------
 @router.post("/", response_model=MediaContentResponse, status_code=201, summary="Create media content")
 def create_media(payload: MediaContentCreate, db: Session = Depends(get_db)):
-    """Create a new media content record (movie, web series, show, or music)."""
+    """Create a new media content record (movie, web series, show, or music). Rejects duplicates by name."""
     data = payload.model_dump()
     data["media_name"] = data["media_name"].strip().title()
+
+    # Check for duplicate media name (case-insensitive)
+    existing = db.query(MediaContent).filter(
+        MediaContent.media_name.ilike(data["media_name"])
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Media with name '{data['media_name']}' already exists (id={existing.id})"
+        )
+
     record = MediaContent(**data)
     db.add(record)
     db.commit()
@@ -39,20 +50,23 @@ def list_media(
     page_size: int = Query(20, ge=1, le=500),
     media_category: str | None = Query(None, description="Filter by category: movies, webseries, shows, music"),
     genre: str | None = Query(None, description="Filter by genre"),
+    tags: str | None = Query(None, description="Filter by tag (searches within comma-separated tags)"),
     search: str | None = Query(None, description="Search by name"),
     db: Session = Depends(get_db),
 ):
-    """List all media content with optional filters and pagination."""
+    """List all media content with optional filters and pagination. Sorted by updated_at desc."""
     query = db.query(MediaContent)
     if media_category:
         query = query.filter(MediaContent.media_category == media_category)
     if genre:
         query = query.filter(MediaContent.genre.ilike(f"%{genre}%"))
+    if tags:
+        query = query.filter(MediaContent.tags.ilike(f"%{tags}%"))
     if search:
         query = query.filter(MediaContent.media_name.ilike(f"%{search}%"))
 
     total = query.count()
-    items = query.order_by(MediaContent.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    items = query.order_by(MediaContent.updated_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
 
     return MediaContentPaginatedResponse(
         items=items,
@@ -112,7 +126,7 @@ def get_media_by_category(
     """Get all media filtered by category (movies, webseries, shows, music)."""
     query = db.query(MediaContent).filter(MediaContent.media_category == category)
     total = query.count()
-    items = query.order_by(MediaContent.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    items = query.order_by(MediaContent.updated_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
 
     return MediaContentPaginatedResponse(
         items=items,

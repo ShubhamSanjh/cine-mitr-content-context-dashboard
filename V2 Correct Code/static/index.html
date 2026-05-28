@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Content Dashboard v2</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- ==================== SIDEBAR ==================== -->
+<aside class="sidebar">
+    <div class="sidebar-header">
+        <h1>Content Dashboard v2</h1>
+        <span class="env-badge" id="envBadge">DEV</span>
+    </div>
+    <nav class="sidebar-nav">
+        <div class="nav-section">Overview</div>
+        <div class="nav-item active" data-page="dashboard">
+            <span class="icon">📊</span> Dashboard
+        </div>
+
+        <div class="nav-section">Manager</div>
+        <div class="nav-item" data-page="links">
+            <span class="icon">🔗</span> Link Content
+        </div>
+        <div class="nav-item" data-page="status-tracking">
+            <span class="icon">📋</span> Content Ideas & Status
+        </div>
+        <div class="nav-item" data-page="status-mgmt">
+            <span class="icon">🏷️</span> Status Management
+        </div>
+
+        <div class="nav-section">Content</div>
+        <div class="nav-item" data-page="media">
+            <span class="icon">🎬</span> Media
+        </div>
+
+        <div class="nav-section">Calendar</div>
+        <div class="nav-item" data-page="content-calendar">
+            <span class="icon">📅</span> Content Calendar
+        </div>
+
+        <div class="nav-section">Reminders</div>
+        <div class="nav-item" data-page="reminders">
+            <span class="icon">🔔</span> Reminders
+        </div>
+
+        <div class="nav-section">Analytics</div>
+        <div class="nav-item" data-page="analytics" id="navAnalytics">
+            <span class="icon">📈</span> Analytics
+        </div>
+        <div class="nav-item" data-page="reports">
+            <span class="icon">📊</span> Reports
+        </div>
+        <div class="nav-item" data-page="statistics">
+            <span class="icon">📉</span> Statistics
+        </div>
+
+        <div class="nav-section">Productivity</div>
+        <div class="nav-item" data-page="tasks">
+            <span class="icon">✅</span> Todo Tasks
+        </div>
+
+        <div class="nav-section">System</div>
+        <div class="nav-item" data-page="api-docs">
+            <span class="icon">📘</span> API Docs
+        </div>
+    </nav>
+    <div class="sidebar-footer">v4.0.0 &middot; Content Dashboard v2</div>
+</aside>
+
+<!-- ==================== MAIN CONTENT ==================== -->
+<div class="main">
+    <!-- Top Bar -->
+    <div class="topbar">
+        <h2 id="pageTitle">Dashboard</h2>
+        <div class="topbar-actions">
+            <input type="text" id="globalSearch" class="search-input" placeholder="🔍 Search media..." onkeyup="handleSearch(event)" />
+        </div>
+    </div>
+
+    <!-- Page: Dashboard -->
+    <div class="content-area" id="page-dashboard">
+        <div class="page-actions" style="margin-bottom:12px;">
+            <select id="dashboardCategoryFilter" onchange="loadDashboard()">
+                <option value="">All Categories</option>
+                <option value="movies">Movies</option>
+                <option value="webseries">Web Series</option>
+                <option value="shows">Shows</option>
+                <option value="music">Music</option>
+            </select>
+            <select id="dashboardDataFilter" onchange="loadDashboard()">
+                <option value="all">All Data</option>
+                <option value="media">Media Only</option>
+                <option value="links">Links Only</option>
+                <option value="status">Status Only</option>
+            </select>
+            <button class="btn-outline" onclick="loadDashboard()">↻ Refresh</button>
+            <button class="btn-outline" onclick="exportFullExcel()">📥 Full Export</button>
+        </div>
+        <div class="stats-row" id="dashboardStats"></div>
+        <div class="charts-row">
+            <div class="card chart-card">
+                <div class="card-header"><h3>Category Distribution</h3></div>
+                <div class="chart-container"><canvas id="categoryChart"></canvas></div>
+            </div>
+            <div class="card chart-card">
+                <div class="card-header"><h3>Status Overview</h3></div>
+                <div class="chart-container"><canvas id="statusChart"></canvas></div>
+            </div>
+        </div>
+        <div class="card" style="margin-top:20px">
+            <div class="card-header">
+                <h3>Recent Media</h3>
+            </div>
+            <div id="recentMediaTable"></div>
+        </div>
+    </div>
+
+    <!-- Page: Media (Consolidated) -->
+    <div class="content-area" id="page-media" style="display:none;">
+        <div class="page-actions">
+            <button class="btn-primary" onclick="openMediaModal()">+ Add Media</button>
+            <select id="mediaCategoryFilter" onchange="loadMediaPage()">
+                <option value="">All Categories</option>
+                <option value="movies">Movies</option>
+                <option value="webseries">Web Series</option>
+                <option value="shows">Shows</option>
+                <option value="music">Music</option>
+            </select>
+            <input type="text" class="search-input" id="mediaSearchInput" placeholder="🔍 Search by name..." onkeyup="handleMediaSearch(event)" style="width:200px" />
+            <input type="text" class="search-input" id="mediaTagsFilter" placeholder="🏷️ Filter by tag..." onkeyup="handleMediaSearch(event)" style="width:150px" />
+            <button class="btn-outline" onclick="exportExcel('media')">📥 Export Excel</button>
+            <button class="btn-outline" onclick="downloadTemplate('media')">📄 Template</button>
+            <label class="btn-outline" style="cursor:pointer;display:inline-block;padding:6px 14px;font-size:.85rem">
+                📤 Import <input type="file" accept=".xlsx,.xls" onchange="importExcel('media', this)" style="display:none" />
+            </label>
+        </div>
+        <div class="card">
+            <div class="card-header"><h3>Media Management</h3><button class="btn-outline" onclick="loadMediaPage()">↻ Refresh</button></div>
+            <div id="mediaTable"></div>
+        </div>
+    </div>
+
+    <!-- Page: Link Content (Enhanced) -->
+    <div class="content-area" id="page-links" style="display:none;">
+        <div class="page-actions">
+            <button class="btn-primary" onclick="openLinkModal()">+ Add Link</button>
+            <input type="text" class="search-input" id="linkSearchInput" placeholder="🔍 Search links..." onkeyup="handleLinkSearch(event)" style="width:200px" />
+            <input type="text" class="search-input" id="linkTagsFilter" placeholder="🏷️ Filter by tag..." onkeyup="handleLinkSearch(event)" style="width:150px" />
+            <select id="linkStatusFilter" onchange="loadLinks()">
+                <option value="">All Status</option>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+            </select>
+            <select id="linkCategoryFilter" onchange="loadLinks()">
+                <option value="">All Categories</option>
+                <option value="movies">Movies</option>
+                <option value="webseries">Web Series</option>
+                <option value="shows">Shows</option>
+                <option value="music">Music</option>
+            </select>
+            <button class="btn-outline" onclick="downloadAllLinks()">📥 Download All</button>
+            <button class="btn-outline" onclick="exportExcel('links')">📥 Export Excel</button>
+            <button class="btn-outline" onclick="downloadTemplate('links')">📄 Template</button>
+            <label class="btn-outline" style="cursor:pointer;display:inline-block;padding:6px 14px;font-size:.85rem">
+                📤 Import <input type="file" accept=".xlsx,.xls" onchange="importExcel('links', this)" style="display:none" />
+            </label>
+        </div>
+        <div class="card">
+            <div class="card-header"><h3>Linked Content</h3><button class="btn-outline" onclick="loadLinks()">↻ Refresh</button></div>
+            <div id="linksTable"></div>
+        </div>
+    </div>
+
+    <!-- Page: Content Ideas and Status -->
+    <div class="content-area" id="page-status-tracking" style="display:none;">
+        <div class="page-actions">
+            <button class="btn-primary" onclick="openStatusModal()">+ Add Status</button>
+            <select id="statusCategoryFilter" onchange="loadStatuses()">
+                <option value="">All Categories</option>
+                <option value="movies">Movies</option>
+                <option value="webseries">Web Series</option>
+                <option value="shows">Shows</option>
+                <option value="music">Music</option>
+            </select>
+            <select id="statusStatusFilter" onchange="loadStatuses()">
+                <option value="">All Statuses</option>
+            </select>
+            <input type="text" class="search-input" id="statusSearchInput" placeholder="🔍 Search by media name..." onkeyup="handleStatusSearch(event)" style="width:200px" />
+            <input type="text" class="search-input" id="statusTagsFilter" placeholder="🏷️ Filter by tag..." onkeyup="handleStatusSearch(event)" style="width:150px" />
+            <button class="btn-outline" onclick="exportExcel('status')">📥 Export Excel</button>
+            <button class="btn-outline" onclick="downloadTemplate('status')">📄 Template</button>
+            <label class="btn-outline" style="cursor:pointer;display:inline-block;padding:6px 14px;font-size:.85rem">
+                📤 Import <input type="file" accept=".xlsx,.xls" onchange="importExcel('status', this)" style="display:none" />
+            </label>
+        </div>
+        <div class="card">
+            <div class="card-header"><h3>Content Ideas & Status</h3><button class="btn-outline" onclick="loadStatuses()">↻ Refresh</button></div>
+            <div id="statusTable"></div>
+        </div>
+    </div>
+
+    <!-- Page: Status Management -->
+    <div class="content-area" id="page-status-mgmt" style="display:none;">
+        <div class="page-actions">
+            <button class="btn-primary" onclick="openStatusDefModal()">+ Add Status Name</button>
+            <button class="btn-outline" onclick="seedDefaultStatuses()">🌱 Seed Defaults</button>
+        </div>
+        <div class="card">
+            <div class="card-header"><h3>Status Definitions</h3><button class="btn-outline" onclick="loadStatusDefs()">↻ Refresh</button></div>
+            <div id="statusDefsTable"></div>
+        </div>
+    </div>
+
+    <!-- Page: Content Calendar -->
+    <div class="content-area" id="page-content-calendar" style="display:none;">
+        <div class="page-actions">
+            <button class="btn-outline" onclick="prevContentCalMonth()">&lt; Prev</button>
+            <h3 id="contentCalendarTitle" style="margin:0 16px;display:inline"></h3>
+            <button class="btn-outline" onclick="nextContentCalMonth()">Next &gt;</button>
+        </div>
+        <div class="card" style="margin-top:12px;">
+            <div id="contentCalendarGrid" class="calendar-grid" style="min-height:400px;"></div>
+        </div>
+        <div class="card" style="margin-top:12px;">
+            <div class="card-header"><h3>Events This Month</h3></div>
+            <div id="contentCalendarEvents"></div>
+        </div>
+    </div>
+
+    <!-- Page: Reminders -->
+    <div class="content-area" id="page-reminders" style="display:none;">
+        <div class="page-actions">
+            <button class="btn-primary" onclick="openReminderModal()">+ Add Reminder</button>
+            <label style="font-size:.85rem;display:flex;align-items:center;gap:6px;cursor:pointer">
+                <input type="checkbox" id="reminderUpcoming" onchange="loadReminders()" style="width:auto" /> Upcoming only
+            </label>
+        </div>
+        <div class="card">
+            <div class="card-header"><h3>Reminders</h3><button class="btn-outline" onclick="loadReminders()">↻ Refresh</button></div>
+            <div id="remindersTable"></div>
+        </div>
+    </div>
+
+    <!-- Page: Analytics (Dynamic) -->
+    <div class="content-area" id="page-analytics" style="display:none;">
+        <div class="page-actions">
+            <select id="analyticsCategory" onchange="loadAnalytics()">
+                <option value="">All Categories</option>
+                <option value="movies">Movies</option>
+                <option value="webseries">Web Series</option>
+                <option value="shows">Shows</option>
+                <option value="music">Music</option>
+            </select>
+            <button class="btn-outline" onclick="loadAnalytics()">↻ Refresh</button>
+        </div>
+        <div class="stats-row" id="analyticsStats"></div>
+        <div class="charts-row">
+            <div class="card chart-card">
+                <div class="card-header"><h3>Tag Distribution</h3></div>
+                <div class="chart-container"><canvas id="analyticsTagChart"></canvas></div>
+            </div>
+            <div class="card chart-card">
+                <div class="card-header"><h3>Top Rated Media</h3></div>
+                <div class="chart-container"><canvas id="analyticsRatingChart"></canvas></div>
+            </div>
+        </div>
+        <div class="charts-row" style="margin-top:16px;">
+            <div class="card chart-card">
+                <div class="card-header"><h3>Links by Platform</h3></div>
+                <div class="chart-container"><canvas id="analyticsPlatformChart"></canvas></div>
+            </div>
+            <div class="card chart-card">
+                <div class="card-header"><h3>Status Distribution</h3></div>
+                <div class="chart-container"><canvas id="analyticsStatusFlowChart"></canvas></div>
+            </div>
+        </div>
+        <div class="card" style="margin-top:16px;">
+            <div class="card-header"><h3>Most Linked Media</h3></div>
+            <div id="analyticsMostLinked"></div>
+        </div>
+    </div>
+
+    <!-- Page: Reports -->
+    <div class="content-area" id="page-reports" style="display:none;">
+        <div class="filter-bar">
+            <select id="reportCategory" onchange="loadReport()">
+                <option value="">All Categories</option>
+                <option value="movies">Movies</option>
+                <option value="webseries">Web Series</option>
+                <option value="shows">Shows</option>
+                <option value="music">Music</option>
+            </select>
+            <select id="reportStatus" onchange="loadReport()">
+                <option value="">All Statuses</option>
+                <option value="reviewed">Reviewed</option>
+                <option value="proceed">Proceed</option>
+                <option value="stopped">Stopped</option>
+                <option value="in_progress">In Progress</option>
+                <option value="revived">Revived</option>
+                <option value="planned">Planned</option>
+                <option value="cancelled">Cancelled</option>
+            </select>
+            <button class="btn-outline" onclick="exportCSV()">📥 Export CSV</button>
+        </div>
+        <div class="charts-row" style="margin-top:16px;">
+            <div class="card chart-card">
+                <div class="card-header"><h3>Rating Distribution</h3></div>
+                <div class="chart-container"><canvas id="ratingChart"></canvas></div>
+            </div>
+            <div class="card chart-card">
+                <div class="card-header"><h3>Category Breakdown</h3></div>
+                <div class="chart-container"><canvas id="reportCategoryChart"></canvas></div>
+            </div>
+        </div>
+        <div class="card" style="margin-top:20px;">
+            <div class="card-header"><h3>Report Data</h3></div>
+            <div id="reportTable"></div>
+        </div>
+    </div>
+
+    <!-- Page: Statistics -->
+    <div class="content-area" id="page-statistics" style="display:none;">
+        <div class="stats-row" id="statisticsStats"></div>
+        <div class="charts-row" style="margin-top:20px;">
+            <div class="card chart-card">
+                <div class="card-header"><h3>Media Status Distribution</h3></div>
+                <div class="chart-container"><canvas id="statsStatusChart"></canvas></div>
+            </div>
+            <div class="card chart-card">
+                <div class="card-header"><h3>Task Progress</h3></div>
+                <div class="chart-container"><canvas id="statsTaskChart"></canvas></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Page: Todo Tasks -->
+    <div class="content-area" id="page-tasks" style="display:none;">
+        <div class="tasks-layout">
+            <div class="tasks-list-panel">
+                <div class="page-actions">
+                    <button class="btn-primary" onclick="openTaskModal()">+ Add Task</button>
+                    <select id="taskFilter" onchange="loadTasks()">
+                        <option value="">All Tasks</option>
+                        <option value="pending">Pending</option>
+                        <option value="in_progress">In Progress</option>
+                        <option value="completed">Completed</option>
+                    </select>
+                </div>
+                <div id="tasksList"></div>
+            </div>
+            <div class="calendar-panel">
+                <div class="calendar-header">
+                    <button class="btn-outline" onclick="prevMonth()">&lt;</button>
+                    <h3 id="calendarTitle"></h3>
+                    <button class="btn-outline" onclick="nextMonth()">&gt;</button>
+                </div>
+                <div class="calendar-grid" id="calendarGrid"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Page: API Docs -->
+    <div class="content-area" id="page-api-docs" style="display:none;">
+        <div class="placeholder-page">
+            <div class="icon">📘</div>
+            <h3>API Documentation</h3>
+            <p>Interactive API documentation is available at:</p>
+            <p style="margin-top:12px;">
+                <a href="/docs" target="_blank" class="btn-primary" style="text-decoration:none;padding:10px 24px;border-radius:8px;">Open Swagger UI →</a>
+            </p>
+            <p style="margin-top:12px;">
+                <a href="/redoc" target="_blank" class="btn-outline" style="text-decoration:none;padding:10px 24px;border-radius:8px;display:inline-block;">Open ReDoc →</a>
+            </p>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MEDIA MODAL ==================== -->
+<div class="modal-overlay" id="mediaModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="mediaModalTitle">Add Media</h3>
+            <button class="modal-close" onclick="closeMediaModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="mediaEditId" />
+            <div class="form-group">
+                <label>Category *</label>
+                <select id="fMediaCategory">
+                    <option value="movies">Movies</option>
+                    <option value="webseries">Web Series</option>
+                    <option value="shows">Shows</option>
+                    <option value="music">Music</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Media Name *</label>
+                <input type="text" id="fMediaName" placeholder="Enter name" />
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Release Date</label>
+                    <input type="date" id="fReleaseDate" />
+                </div>
+                <div class="form-group">
+                    <label>Rating (0-10)</label>
+                    <input type="number" id="fRating" min="0" max="10" step="0.1" placeholder="8.5" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Genre</label>
+                <input type="text" id="fGenre" placeholder="e.g. Action, Thriller" />
+            </div>
+            <div class="form-group">
+                <label>Director</label>
+                <input type="text" id="fDirector" placeholder="Director name" />
+            </div>
+            <div class="form-group">
+                <label>Cast</label>
+                <input type="text" id="fCast" placeholder="Actor 1, Actor 2, ..." />
+            </div>
+            <div class="form-group">
+                <label>Tags <small>(comma-separated)</small></label>
+                <input type="text" id="fMediaTags" placeholder="e.g. sci-fi, must-watch, nolan" />
+            </div>
+            <div class="form-group">
+                <label>Review</label>
+                <textarea id="fReview" placeholder="Your review..."></textarea>
+            </div>
+            <div class="form-group">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                    <input type="checkbox" id="fIsAvailable" onchange="toggleAvailableOn()" style="width:auto;margin:0;" />
+                    Is Available
+                </label>
+            </div>
+            <div class="form-group" id="availableOnGroup" style="display:none;">
+                <label>Available On</label>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <input type="text" id="fAvailableOn" placeholder="e.g. Netflix, Amazon Prime" style="flex:1" />
+                    <button type="button" class="btn-outline" style="padding:6px 12px;font-size:.8rem;white-space:nowrap" onclick="editAvailableOn()">✏️ Edit</button>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-outline" onclick="closeMediaModal()">Cancel</button>
+            <button class="btn-primary" onclick="saveMedia()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== LINK MODAL (Enhanced) ==================== -->
+<div class="modal-overlay" id="linkModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="linkModalTitle">Add Link</h3>
+            <button class="modal-close" onclick="closeLinkModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="linkEditId" />
+            <div class="form-group">
+                <label>URL *</label>
+                <input type="url" id="fLinkUrl" placeholder="https://..." />
+            </div>
+            <div class="form-group">
+                <label>Media Name * <small>(type to search)</small></label>
+                <div class="autocomplete-wrapper">
+                    <input type="text" id="fLinkMediaSearch" placeholder="Start typing media name..." autocomplete="off" oninput="searchMediaForLink()" />
+                    <input type="hidden" id="fLinkMediaId" />
+                    <div class="autocomplete-dropdown" id="mediaSearchDropdown"></div>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Media Category</label>
+                    <input type="text" id="fLinkMediaCategory" readonly placeholder="Auto-filled" />
+                </div>
+                <div class="form-group">
+                    <label>Platform *</label>
+                    <select id="fLinkPlatform">
+                        <option value="youtube">YouTube</option>
+                        <option value="instagram">Instagram</option>
+                        <option value="twitter">Twitter/X</option>
+                        <option value="spotify">Spotify</option>
+                        <option value="netflix">Netflix</option>
+                        <option value="amazon">Amazon Prime</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Status</label>
+                    <select id="fLinkStatus">
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <input type="text" id="fLinkDesc" placeholder="Brief description" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Tags <small>(comma-separated)</small></label>
+                <input type="text" id="fLinkTags" placeholder="e.g. trailer, official" />
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-outline" onclick="closeLinkModal()">Cancel</button>
+            <button class="btn-primary" onclick="saveLink()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== STATUS MODAL ==================== -->
+<div class="modal-overlay" id="statusModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="statusModalTitle">Add Status</h3>
+            <button class="modal-close" onclick="closeStatusModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="statusEditId" />
+            <div class="form-group">
+                <label>Media * <small>(type to search)</small></label>
+                <div class="autocomplete-wrapper">
+                    <input type="text" id="fStatusMediaSearch" placeholder="Start typing media name..." autocomplete="off" oninput="searchMediaForStatus()" />
+                    <input type="hidden" id="fStatusMediaId" />
+                    <div class="autocomplete-dropdown" id="statusMediaSearchDropdown"></div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Media Category</label>
+                <input type="text" id="fStatusMediaCategory" readonly placeholder="Auto-filled from media" />
+            </div>
+            <div class="form-group">
+                <label>Status *</label>
+                <select id="fStatusValue">
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Tags <small>(comma-separated)</small></label>
+                <input type="text" id="fStatusTags" placeholder="e.g. priority, urgent" />
+            </div>
+            <div class="form-group">
+                <label>Notes</label>
+                <textarea id="fStatusNotes" placeholder="Additional notes..."></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-outline" onclick="closeStatusModal()">Cancel</button>
+            <button class="btn-primary" onclick="saveStatus()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== TASK MODAL ==================== -->
+<div class="modal-overlay" id="taskModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="taskModalTitle">Add Task</h3>
+            <button class="modal-close" onclick="closeTaskModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="taskEditId" />
+            <div class="form-group">
+                <label>Title *</label>
+                <input type="text" id="fTaskTitle" placeholder="Task title" />
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <textarea id="fTaskDesc" placeholder="Task details..."></textarea>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Due Date</label>
+                    <input type="date" id="fTaskDueDate" />
+                </div>
+                <div class="form-group">
+                    <label>Priority</label>
+                    <select id="fTaskPriority">
+                        <option value="low">Low</option>
+                        <option value="medium" selected>Medium</option>
+                        <option value="high">High</option>
+                        <option value="urgent">Urgent</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Category</label>
+                    <select id="fTaskCategory">
+                        <option value="general">General</option>
+                        <option value="media">Media</option>
+                        <option value="project">Project</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Status</label>
+                    <select id="fTaskStatus">
+                        <option value="pending">Pending</option>
+                        <option value="in_progress">In Progress</option>
+                        <option value="completed">Completed</option>
+                        <option value="cancelled">Cancelled</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Tags <small>(comma-separated)</small></label>
+                <input type="text" id="fTaskTags" placeholder="e.g. review, urgent" />
+            </div>
+            <div class="form-group">
+                <label>Reminder Date/Time</label>
+                <input type="datetime-local" id="fTaskReminder" />
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-outline" onclick="closeTaskModal()">Cancel</button>
+            <button class="btn-primary" onclick="saveTask()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== REMINDER MODAL ==================== -->
+<div class="modal-overlay" id="reminderModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="reminderModalTitle">Add Reminder</h3>
+            <button class="modal-close" onclick="closeReminderModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="reminderEditId" />
+            <div class="form-group">
+                <label>Title *</label>
+                <input type="text" id="fReminderTitle" placeholder="Reminder title" />
+            </div>
+            <div class="form-group">
+                <label>Reminder Date/Time *</label>
+                <input type="datetime-local" id="fReminderDate" />
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Type</label>
+                    <select id="fReminderType">
+                        <option value="deadline">Deadline</option>
+                        <option value="publication">Publication</option>
+                        <option value="custom">Custom</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Media <small>(optional)</small></label>
+                    <select id="fReminderMediaId">
+                        <option value="">-- None --</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Message</label>
+                <textarea id="fReminderMessage" placeholder="Reminder details..."></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-outline" onclick="closeReminderModal()">Cancel</button>
+            <button class="btn-primary" onclick="saveReminder()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== STATUS DEFINITION MODAL ==================== -->
+<div class="modal-overlay" id="statusDefModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="statusDefModalTitle">Add Status Name</h3>
+            <button class="modal-close" onclick="closeStatusDefModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="statusDefEditId" />
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Name * <small>(unique key)</small></label>
+                    <input type="text" id="fStatusDefName" placeholder="e.g. in_review" />
+                </div>
+                <div class="form-group">
+                    <label>Label *</label>
+                    <input type="text" id="fStatusDefLabel" placeholder="e.g. In Review" />
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Usage Context</label>
+                    <select id="fStatusDefContext">
+                        <option value="all">All (Links + Status)</option>
+                        <option value="links">Links Only</option>
+                        <option value="status_tracking">Content Ideas & Status Only</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Color</label>
+                    <input type="text" id="fStatusDefColor" placeholder="e.g. green, blue, red" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <input type="text" id="fStatusDefDesc" placeholder="What this status means" />
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-outline" onclick="closeStatusDefModal()">Cancel</button>
+            <button class="btn-primary" onclick="saveStatusDef()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== TOAST ==================== -->
+<div class="toast-container" id="toasts"></div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>

@@ -282,7 +282,7 @@ def test_ui_has_dynamic_status_dropdown():
 
 def test_ui_version():
     res = client.get("/")
-    assert "v3.0.0" in res.text
+    assert "v4.0.0" in res.text
 
 
 def test_ui_analytics_page_exists():
@@ -498,5 +498,82 @@ def test_ui_has_export_buttons():
 
 def test_ui_version_2_4():
     res = client.get("/")
-    assert "v3.0.0" in res.text
+    assert "v4.0.0" in res.text
+
+
+# ===== IMPORT PERFORMANCE & DEDUPLICATION TESTS =====
+
+def test_import_media_deduplicates_within_file():
+    """Same name appearing multiple times in one file should only be ingested once."""
+    from openpyxl import Workbook
+    import io
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["media_category", "media_name", "release_date", "genre", "director", "cast_members", "rating", "review"])
+    ws.append(["webseries", "Duplicate Show", "", "", "", "", "", ""])
+    ws.append(["webseries", "Duplicate Show", "", "", "", "", "", ""])  # same name
+    ws.append(["webseries", "Duplicate Show", "", "", "", "", "", ""])  # same name again
+    ws.append(["webseries", "Unique Show", "", "", "", "", "", ""])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    res = client.post("/api/v1/excel/import/media", files={"file": ("test.xlsx", buf, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["created"] == 2  # Only 2 unique names
+    assert data["summary"]["failed"] == 2  # 2 intra-file duplicates
+    assert data["summary"]["total_processed"] == 4
+    # Check errors have proper structure
+    dup_errors = [e for e in data["errors"] if e["issue_type"] == "duplicate_in_file"]
+    assert len(dup_errors) == 2
+
+
+def test_import_media_skips_existing_db_records():
+    """Records already in DB should be reported as duplicates, not crash."""
+    client.post("/api/v1/media/", json={"media_category": "movies", "media_name": "Already Exists"})
+    from openpyxl import Workbook
+    import io
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["media_category", "media_name", "release_date", "genre", "director", "cast_members", "rating", "review"])
+    ws.append(["movies", "Already Exists", "", "", "", "", "", ""])
+    ws.append(["movies", "Brand New Movie", "", "", "", "", "", ""])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    res = client.post("/api/v1/excel/import/media", files={"file": ("test.xlsx", buf, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["created"] == 1
+    assert data["summary"]["failed"] == 1
+    db_dup_errors = [e for e in data["errors"] if e["issue_type"] == "duplicate"]
+    assert len(db_dup_errors) == 1
+
+
+def test_import_media_returns_summary_structure():
+    """Import response should have proper summary structure."""
+    from openpyxl import Workbook
+    import io
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["media_category", "media_name"])
+    ws.append(["movies", "Summary Test Movie"])
+    ws.append(["", ""])  # empty row
+    ws.append(["", "Missing Category"])  # missing category
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    res = client.post("/api/v1/excel/import/media", files={"file": ("test.xlsx", buf, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")})
+    assert res.status_code == 200
+    data = res.json()
+    assert "summary" in data
+    s = data["summary"]
+    assert "total_rows" in s
+    assert "total_processed" in s
+    assert "successful" in s
+    assert "failed" in s
+    assert "skipped_empty" in s
+    assert s["total_rows"] == 3
+    assert s["skipped_empty"] >= 1
+
 

@@ -17,32 +17,78 @@ let allStatusDefs = [];
 let searchTimeout = null;
 let analyticsEnabled = true;
 
-// ===== Navigation =====
+// ===== URL-based Navigation (path routing) =====
+// Pages accessible via: /dashboard, /media, /links, /status-tracking, etc.
+
+const KNOWN_PAGES = ["dashboard", "media", "links", "status-tracking", "status-mgmt",
+    "content-calendar", "reminders", "analytics", "reports", "statistics", "tasks", "import-history"];
+
+function navigateToPage(page, pushState = true) {
+    document.querySelectorAll(".nav-item").forEach((i) => i.classList.remove("active"));
+    const navItem = document.querySelector(`.nav-item[data-page="${page}"]`);
+    if (navItem) {
+        navItem.classList.add("active");
+        document.getElementById("pageTitle").textContent = navItem.textContent.trim();
+    }
+
+    document.querySelectorAll(".content-area").forEach((p) => (p.style.display = "none"));
+    const el = document.getElementById("page-" + page);
+    if (el) el.style.display = "block";
+
+    // Update URL path using History API (clean URLs, no hash)
+    if (pushState) {
+        const newPath = `/${page}`;
+        if (window.location.pathname !== newPath) {
+            history.pushState({ page }, "", newPath);
+        }
+    }
+
+    switch (page) {
+        case "dashboard": loadDashboard(); break;
+        case "media": loadMediaPage(); break;
+        case "links": loadLinks(); break;
+        case "status-tracking": loadStatuses(); break;
+        case "status-mgmt": loadStatusDefs(); break;
+        case "content-calendar": loadContentCalendar(); break;
+        case "reminders": loadReminders(); break;
+        case "analytics": loadAnalytics(); break;
+        case "reports": loadReport(); break;
+        case "statistics": loadStatistics(); break;
+        case "tasks": loadTasks(); renderCalendar(); break;
+        case "import-history": loadImportHistory(); break;
+    }
+}
+
+function getPageFromURL() {
+    // Check path-based routing: /media, /links, etc.
+    const path = window.location.pathname.replace(/^\//, ""); // strip leading /
+    if (path && KNOWN_PAGES.includes(path)) {
+        return path;
+    }
+    // Fallback: support legacy hash URLs for backward compatibility
+    const hash = window.location.hash;
+    if (hash && hash.startsWith("#/")) {
+        const hashPage = hash.substring(2);
+        if (KNOWN_PAGES.includes(hashPage)) return hashPage;
+    }
+    return null;
+}
+
+// Listen for browser back/forward navigation
+window.addEventListener("popstate", (e) => {
+    const page = (e.state && e.state.page) || getPageFromURL() || "dashboard";
+    navigateToPage(page, false);
+});
+
+// Sidebar click handlers
 document.querySelectorAll(".nav-item").forEach((item) => {
     item.addEventListener("click", () => {
-        document.querySelectorAll(".nav-item").forEach((i) => i.classList.remove("active"));
-        item.classList.add("active");
-
         const page = item.dataset.page;
-        document.getElementById("pageTitle").textContent = item.textContent.trim();
-
-        document.querySelectorAll(".content-area").forEach((p) => (p.style.display = "none"));
-        const el = document.getElementById("page-" + page);
-        if (el) el.style.display = "block";
-
-        switch (page) {
-            case "dashboard": loadDashboard(); break;
-            case "media": loadMediaPage(); break;
-            case "links": loadLinks(); break;
-            case "status-tracking": loadStatuses(); break;
-            case "status-mgmt": loadStatusDefs(); break;
-            case "content-calendar": loadContentCalendar(); break;
-            case "reminders": loadReminders(); break;
-            case "analytics": loadAnalytics(); break;
-            case "reports": loadReport(); break;
-            case "statistics": loadStatistics(); break;
-            case "tasks": loadTasks(); renderCalendar(); break;
+        if (page === "api-docs") {
+            window.open("/docs", "_blank");
+            return;
         }
+        navigateToPage(page);
     });
 });
 
@@ -622,6 +668,8 @@ async function openStatusModal() {
     document.getElementById("fStatusTags").value = "";
     document.getElementById("fStatusNotes").value = "";
     document.getElementById("statusMediaSearchDropdown").classList.remove("show");
+    document.getElementById("statusLinkInfo").style.display = "none";
+    document.getElementById("statusLinkDetails").innerHTML = "";
     document.getElementById("statusModalTitle").textContent = "Add Status";
     document.getElementById("statusModal").classList.add("open");
 }
@@ -650,13 +698,30 @@ async function searchMediaForStatus() {
     const dropdown = document.getElementById("statusMediaSearchDropdown");
     if (query.length < 2) { dropdown.classList.remove("show"); return; }
     try {
-        const results = await api(`/media-links/search-media?q=${encodeURIComponent(query)}`);
+        const results = await api(`/media-status/search-all?q=${encodeURIComponent(query)}`);
         let html = "";
-        if (results.length) {
-            html = results.map(m =>
+
+        // Media results section
+        if (results.media && results.media.length) {
+            html += `<div class="autocomplete-section-header">📋 Media</div>`;
+            html += results.media.map(m =>
                 `<div class="autocomplete-item" onclick="selectMediaForStatus(${m.id}, '${escapeHtml(m.media_name).replace(/'/g, "\\'")}', '${m.media_category}')">${escapeHtml(m.media_name)}<span class="ac-category">${m.media_category}</span></div>`
             ).join("");
         }
+
+        // Link results section
+        if (results.links && results.links.length) {
+            html += `<div class="autocomplete-section-header">🔗 Links</div>`;
+            html += results.links.map(lnk =>
+                `<div class="autocomplete-item autocomplete-item-link" onclick="selectLinkForStatus(${lnk.media_id}, '${escapeHtml(lnk.media_name).replace(/'/g, "\\'")}', '${lnk.media_category}', '${escapeHtml(lnk.platform)}', '${escapeHtml(lnk.url).replace(/'/g, "\\'")}')">
+                    <span class="ac-link-name">${escapeHtml(lnk.media_name)}</span>
+                    <span class="ac-link-platform">${lnk.platform}</span>
+                    <span class="ac-link-url" title="${escapeHtml(lnk.url)}">${escapeHtml(lnk.url.length > 40 ? lnk.url.substring(0, 40) + '...' : lnk.url)}</span>
+                </div>`
+            ).join("");
+        }
+
+        // Create new option
         html += `<div class="autocomplete-item" style="color:var(--info);font-weight:600;border-top:2px solid var(--border)" onclick="createNewMediaFromStatus()">➕ Create "${escapeHtml(query)}" as new media</div>`;
         dropdown.innerHTML = html;
         dropdown.classList.add("show");
@@ -668,6 +733,22 @@ function selectMediaForStatus(id, name, category) {
     document.getElementById("fStatusMediaSearch").value = name;
     document.getElementById("fStatusMediaCategory").value = category;
     document.getElementById("statusMediaSearchDropdown").classList.remove("show");
+    // Hide link info when selecting from media directly
+    document.getElementById("statusLinkInfo").style.display = "none";
+    document.getElementById("statusLinkDetails").innerHTML = "";
+}
+
+function selectLinkForStatus(mediaId, mediaName, mediaCategory, platform, url) {
+    document.getElementById("fStatusMediaId").value = mediaId;
+    document.getElementById("fStatusMediaSearch").value = mediaName;
+    document.getElementById("fStatusMediaCategory").value = mediaCategory;
+    document.getElementById("statusMediaSearchDropdown").classList.remove("show");
+    // Show link info badge
+    document.getElementById("statusLinkInfo").style.display = "block";
+    document.getElementById("statusLinkDetails").innerHTML = `
+        <span class="link-badge-platform">${escapeHtml(platform)}</span>
+        <a href="${escapeHtml(url)}" target="_blank" class="link-badge-url">${escapeHtml(url.length > 50 ? url.substring(0, 50) + '...' : url)}</a>
+    `;
 }
 
 async function createNewMediaFromStatus() {
@@ -1093,17 +1174,436 @@ async function importExcel(type, input) {
     if (!file) return;
     const formData = new FormData();
     formData.append("file", file);
+
+    // Show loading toast for large files
+    const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+    toast(`⏳ Uploading ${file.name} (${sizeMB}MB)... Please wait.`, "info");
+
     try {
+        const startTime = Date.now();
         const res = await fetch(`${API}/excel/import/${type}`, { method: "POST", body: formData });
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         const data = await res.json();
         if (!res.ok) { toast(data.detail || "Import failed", "error"); return; }
-        toast(`${data.message}${data.errors?.length ? ` (${data.errors.length} errors)` : ""}`);
-        if (data.errors?.length) { console.warn("Import errors:", data.errors); toast(`⚠️ ${data.errors.length} rows had errors. Check console.`, "error"); }
+        data._elapsed = elapsed;
+        data._historyId = data.import_history_id;
+        showImportResults(type, file.name, data);
         if (type === "media") { loadMediaPage(); loadAllMedia(); }
         else if (type === "links") { loadLinks(); }
         else if (type === "status") { loadStatuses(); }
     } catch (e) { toast("Import failed: " + e.message, "error"); }
     input.value = "";
+}
+
+function showImportResults(type, fileName, data) {
+    const summary = data.summary || {};
+    const errors = data.errors || [];
+    const totalRows = summary.total_rows || 0;
+    const totalProcessed = summary.total_processed || 0;
+    const successful = summary.successful || data.created || 0;
+    const failed = summary.failed || errors.length || 0;
+    const skippedEmpty = summary.skipped_empty || 0;
+
+    const successRate = totalProcessed > 0 ? Math.round((successful / totalProcessed) * 100) : 0;
+    const failRate = totalProcessed > 0 ? Math.round((failed / totalProcessed) * 100) : 0;
+
+    // Group errors by issue_type
+    const errorsByType = {};
+    errors.forEach(err => {
+        const t = err.issue_type || "other";
+        if (!errorsByType[t]) errorsByType[t] = [];
+        errorsByType[t].push(err);
+    });
+
+    const issueTypeLabels = {
+        "missing_field": "⚠️ Missing Required Field",
+        "duplicate": "🔁 Already In Database",
+        "duplicate_in_file": "📄 Duplicate Within File",
+        "validation": "❌ Validation Error",
+        "reference_missing": "🔍 Reference Not Found",
+        "exception": "💥 Unexpected Error",
+        "other": "❓ Other",
+    };
+
+    const issueTypeColors = {
+        "missing_field": "#f59e0b",
+        "duplicate": "#8b5cf6",
+        "duplicate_in_file": "#6b7280",
+        "validation": "#ef4444",
+        "reference_missing": "#3b82f6",
+        "exception": "#dc2626",
+        "other": "#9ca3af",
+    };
+
+    const elapsed = data._elapsed ? ` &middot; ⏱️ ${data._elapsed}s` : "";
+
+    let html = `
+        <div style="margin-bottom:16px;padding:12px 16px;background:var(--body-bg);border-radius:var(--radius);border:1px solid var(--border)">
+            <p style="margin:0;font-size:.82rem;color:var(--text-secondary)">
+                📁 <strong>${escapeHtml(fileName)}</strong> &middot; Type: <strong>${type.charAt(0).toUpperCase() + type.slice(1)}</strong>${elapsed}
+            </p>
+        </div>
+
+        <!-- Performance Chart + Summary -->
+        <div style="display:flex;gap:20px;align-items:center;margin-bottom:24px;flex-wrap:wrap">
+            <!-- Donut Chart -->
+            <div style="width:140px;height:140px;flex-shrink:0">
+                <canvas id="importResultChart"></canvas>
+            </div>
+
+            <!-- Stats Summary -->
+            <div style="flex:1;min-width:200px">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                    <div style="background:var(--body-bg);padding:12px 14px;border-radius:var(--radius);border:1px solid var(--border)">
+                        <div style="font-size:.7rem;color:var(--text-secondary);text-transform:uppercase">Total Rows</div>
+                        <div style="font-size:1.5rem;font-weight:700">${totalRows}</div>
+                    </div>
+                    <div style="background:var(--body-bg);padding:12px 14px;border-radius:var(--radius);border:1px solid var(--border)">
+                        <div style="font-size:.7rem;color:var(--text-secondary);text-transform:uppercase">Processed</div>
+                        <div style="font-size:1.5rem;font-weight:700">${totalProcessed}</div>
+                    </div>
+                    <div style="background:var(--body-bg);padding:12px 14px;border-radius:var(--radius);border:1px solid #bbf7d0">
+                        <div style="font-size:.7rem;color:var(--success);text-transform:uppercase">✅ Ingested</div>
+                        <div style="font-size:1.5rem;font-weight:700;color:var(--success)">${successful}</div>
+                    </div>
+                    <div style="background:var(--body-bg);padding:12px 14px;border-radius:var(--radius);border:1px solid ${failed > 0 ? '#fecaca' : 'var(--border)'}">
+                        <div style="font-size:.7rem;color:${failed > 0 ? 'var(--danger)' : 'var(--text-secondary)'};text-transform:uppercase">❌ Issues</div>
+                        <div style="font-size:1.5rem;font-weight:700;color:${failed > 0 ? 'var(--danger)' : 'var(--text-secondary)'}">${failed}</div>
+                    </div>
+                </div>
+                ${skippedEmpty > 0 ? `<div style="margin-top:8px;font-size:.72rem;color:var(--text-secondary)">⏭️ ${skippedEmpty} empty row(s) skipped</div>` : ""}
+            </div>
+        </div>
+
+        <!-- Progress Bar -->
+        <div style="margin-bottom:24px">
+            <div style="display:flex;justify-content:space-between;font-size:.78rem;margin-bottom:6px;font-weight:500">
+                <span>Import Performance</span>
+                <span style="color:${successRate >= 80 ? 'var(--success)' : successRate >= 50 ? 'var(--warning)' : 'var(--danger)'}">${successRate}% Success</span>
+            </div>
+            <div style="background:var(--body-bg);border-radius:10px;height:18px;overflow:hidden;border:1px solid var(--border)">
+                <div style="height:100%;display:flex">
+                    <div style="width:${successRate}%;background:linear-gradient(90deg,#22c55e,#4ade80);transition:width .5s ease;border-radius:${failRate === 0 ? '10px' : '10px 0 0 10px'}"></div>
+                    <div style="width:${failRate}%;background:linear-gradient(90deg,#ef4444,#f87171);transition:width .5s ease;border-radius:${successRate === 0 ? '10px' : '0 10px 10px 0'}"></div>
+                </div>
+            </div>
+            <div style="display:flex;gap:16px;margin-top:6px;font-size:.72rem;color:var(--text-secondary)">
+                <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#22c55e;margin-right:4px"></span>Ingested: ${successful}</span>
+                <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#ef4444;margin-right:4px"></span>Issues: ${failed}</span>
+                ${skippedEmpty > 0 ? `<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#9ca3af;margin-right:4px"></span>Skipped: ${skippedEmpty}</span>` : ""}
+            </div>
+        </div>
+    `;
+
+    // Errors Detail Section
+    if (errors.length > 0) {
+        html += `
+        <div style="border:1px solid #fecaca;border-radius:var(--radius);padding:16px;background:#fff5f5">
+            <h4 style="margin:0 0 8px;color:var(--danger);font-size:.92rem">⚠️ ${errors.length} Row(s) Need Attention</h4>
+            <p style="font-size:.78rem;color:var(--text-secondary);margin:0 0 14px">
+                These rows were <strong>not imported</strong>. Fix them in your spreadsheet and <strong>re-upload</strong> to complete the import.
+            </p>
+
+            <!-- Issue Type Breakdown -->
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">`;
+
+        for (const [issueType, items] of Object.entries(errorsByType)) {
+            const label = issueTypeLabels[issueType] || issueType;
+            const color = issueTypeColors[issueType] || "#6b7280";
+            html += `<span style="display:inline-flex;align-items:center;gap:4px;font-size:.72rem;padding:4px 10px;border-radius:20px;background:${color}15;border:1px solid ${color}40;color:${color}">${label}: <strong>${items.length}</strong></span>`;
+        }
+        html += `</div>`;
+
+        // Error table
+        html += `
+            <div style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);background:var(--card-bg)">
+                <table style="font-size:.75rem;width:100%;border-collapse:collapse">
+                    <thead style="position:sticky;top:0;background:var(--body-bg);z-index:1">
+                        <tr>
+                            <th style="padding:10px 8px;text-align:left;border-bottom:2px solid var(--border);font-weight:600">Row #</th>
+                            <th style="padding:10px 8px;text-align:left;border-bottom:2px solid var(--border);font-weight:600">Issue Type</th>
+                            <th style="padding:10px 8px;text-align:left;border-bottom:2px solid var(--border);font-weight:600">Row Data</th>
+                            <th style="padding:10px 8px;text-align:left;border-bottom:2px solid var(--border);font-weight:600">What to Fix</th>
+                        </tr>
+                    </thead>
+                    <tbody>`;
+
+        errors.forEach((err, idx) => {
+            const dataStr = err.data ? Object.entries(err.data)
+                .filter(([_, v]) => v)
+                .map(([k, v]) => `<strong>${k}</strong>: ${escapeHtml(String(v).substring(0, 25))}`)
+                .join(" | ") : "—";
+            const typeLabel = issueTypeLabels[err.issue_type] || err.issue_type;
+            const color = issueTypeColors[err.issue_type] || "#6b7280";
+            const bgColor = idx % 2 === 0 ? "transparent" : "var(--body-bg)";
+            html += `<tr style="background:${bgColor}">
+                <td style="padding:8px;font-weight:700;color:var(--text-primary)">${err.row}</td>
+                <td style="padding:8px"><span style="font-size:.65rem;padding:2px 8px;border-radius:12px;background:${color}15;color:${color};border:1px solid ${color}30;white-space:nowrap">${typeLabel}</span></td>
+                <td style="padding:8px;font-size:.7rem;color:var(--text-secondary)">${dataStr}</td>
+                <td style="padding:8px;color:var(--danger);font-weight:500">${escapeHtml(err.issue)}</td>
+            </tr>`;
+        });
+
+        html += `</tbody></table></div>
+        </div>`;
+    } else {
+        html += `<div style="text-align:center;padding:30px;background:#f0fdf4;border-radius:var(--radius);border:1px solid #bbf7d0">
+            <div style="font-size:2.5rem">🎉</div>
+            <p style="margin-top:10px;font-weight:700;font-size:1.05rem;color:var(--success)">All records imported successfully!</p>
+            <p style="margin-top:4px;font-size:.8rem;color:var(--text-secondary)">No issues found — all ${successful} records are now in the database.</p>
+        </div>`;
+    }
+
+    document.getElementById("importResultsBody").innerHTML = html;
+    document.getElementById("importResultsTitle").textContent = `📊 Import Results — ${type.charAt(0).toUpperCase() + type.slice(1)}`;
+    document.getElementById("importResultsModal").classList.add("open");
+
+    // Render the donut chart after modal is visible
+    setTimeout(() => {
+        const ctx = document.getElementById("importResultChart");
+        if (ctx && typeof Chart !== 'undefined') {
+            new Chart(ctx, {
+                type: "doughnut",
+                data: {
+                    labels: ["Ingested", "Issues", ...(skippedEmpty > 0 ? ["Skipped"] : [])],
+                    datasets: [{
+                        data: [successful, failed, ...(skippedEmpty > 0 ? [skippedEmpty] : [])],
+                        backgroundColor: ["#22c55e", "#ef4444", ...(skippedEmpty > 0 ? ["#9ca3af"] : [])],
+                        borderWidth: 2,
+                        borderColor: "#fff",
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    cutout: "65%",
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { bodyFont: { size: 11 } },
+                    },
+                },
+                plugins: [{
+                    id: "centerText",
+                    afterDraw(chart) {
+                        const { ctx: c, width, height } = chart;
+                        c.save();
+                        c.font = "bold 18px Inter, sans-serif";
+                        c.textAlign = "center";
+                        c.textBaseline = "middle";
+                        c.fillStyle = successRate >= 80 ? "#22c55e" : successRate >= 50 ? "#f59e0b" : "#ef4444";
+                        c.fillText(`${successRate}%`, width / 2, height / 2);
+                        c.restore();
+                    }
+                }]
+            });
+        }
+    }, 100);
+}
+
+function closeImportResultsModal() {
+    document.getElementById("importResultsModal").classList.remove("open");
+}
+
+function goToImportHistory() {
+    closeImportResultsModal();
+    // Navigate to import-history page
+    document.querySelectorAll(".nav-item").forEach(i => i.classList.remove("active"));
+    const navItem = document.querySelector('[data-page="import-history"]');
+    if (navItem) navItem.classList.add("active");
+    document.querySelectorAll(".content-area").forEach(p => p.style.display = "none");
+    document.getElementById("page-import-history").style.display = "block";
+    document.getElementById("pageTitle").textContent = "Import History";
+    loadImportHistory();
+}
+
+// ===== IMPORT HISTORY PAGE =====
+let currentHistoryId = null;
+let importRecordSearchTimeout = null;
+
+async function loadImportHistory() {
+    try {
+        const typeFilter = document.getElementById("importHistoryTypeFilter")?.value || "";
+        let params = typeFilter ? `?import_type=${typeFilter}` : "";
+        const items = await api(`/excel/import-history${params}`);
+
+        // Summary of last import
+        const summaryEl = document.getElementById("importHistorySummary");
+        if (items.length > 0) {
+            const last = items[0];
+            summaryEl.innerHTML = `
+                <div class="stats-row">
+                    <div class="stat-card">
+                        <div class="label">Last Import</div>
+                        <div class="value" style="font-size:1.2rem">${escapeHtml(last.file_name)}</div>
+                        <div class="sub">${new Date(last.created_at).toLocaleString()}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Success Rate</div>
+                        <div class="value" style="color:${last.success_rate >= 80 ? 'var(--success)' : last.success_rate >= 50 ? 'var(--warning)' : 'var(--danger)'}">${last.success_rate}%</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">✅ Ingested</div>
+                        <div class="value" style="color:var(--success)">${last.successful}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">❌ Failed</div>
+                        <div class="value" style="color:${last.failed > 0 ? 'var(--danger)' : 'var(--text-secondary)'}">${last.failed}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Total Imports</div>
+                        <div class="value">${items.length}</div>
+                    </div>
+                </div>`;
+        } else {
+            summaryEl.innerHTML = `<div class="empty-state"><p>No imports yet. Upload a template to get started.</p></div>`;
+        }
+
+        // History table
+        const container = document.getElementById("importHistoryTable");
+        if (!items.length) {
+            container.innerHTML = `<div class="empty-state"><div class="icon">📦</div><p>No import history found.</p></div>`;
+            return;
+        }
+        container.innerHTML = `
+            <table>
+                <thead><tr>
+                    <th>Date</th><th>Type</th><th>File</th><th>Total</th><th>✅ Success</th><th>❌ Failed</th><th>Rate</th><th>Actions</th>
+                </tr></thead>
+                <tbody>
+                    ${items.map(h => {
+                        const rateColor = h.success_rate >= 80 ? 'var(--success)' : h.success_rate >= 50 ? 'var(--warning)' : 'var(--danger)';
+                        return `<tr>
+                            <td>${new Date(h.created_at).toLocaleString()}</td>
+                            <td><span class="badge badge-proceed">${h.import_type}</span></td>
+                            <td style="font-size:.78rem">${escapeHtml(h.file_name)}</td>
+                            <td>${h.total_processed}</td>
+                            <td style="color:var(--success);font-weight:600">${h.successful}</td>
+                            <td style="color:${h.failed > 0 ? 'var(--danger)' : 'inherit'};font-weight:${h.failed > 0 ? '600' : 'normal'}">${h.failed}</td>
+                            <td><span style="color:${rateColor};font-weight:600">${h.success_rate}%</span></td>
+                            <td>
+                                <button class="btn-outline" style="padding:3px 8px;font-size:.7rem" onclick="viewImportRecords(${h.id}, '${escapeHtml(h.file_name)}')">📋 View</button>
+                                <button class="btn-outline" style="padding:3px 8px;font-size:.7rem" onclick="exportImportRecordsById(${h.id}, 'failed', 'excel')">📥 Errors</button>
+                            </td>
+                        </tr>`;
+                    }).join("")}
+                </tbody>
+            </table>`;
+    } catch (e) { toast("Failed to load import history: " + e.message, "error"); }
+}
+
+function viewImportRecords(historyId, fileName) {
+    currentHistoryId = historyId;
+    document.getElementById("importRecordsSection").style.display = "block";
+    document.getElementById("importRecordsTitle").textContent = `Records: ${fileName}`;
+    document.getElementById("importRecordStatusFilter").value = "";
+    document.getElementById("importRecordSearch").value = "";
+    loadImportRecords();
+}
+
+async function loadImportRecords() {
+    if (!currentHistoryId) return;
+    try {
+        const status = document.getElementById("importRecordStatusFilter")?.value || "";
+        const search = document.getElementById("importRecordSearch")?.value.trim() || "";
+        let params = `?page_size=100`;
+        if (status) params += `&status=${status}`;
+        if (search) params += `&search=${encodeURIComponent(search)}`;
+
+        const data = await api(`/excel/import-history/${currentHistoryId}/records${params}`);
+        const container = document.getElementById("importRecordsTable");
+
+        if (!data.records.length) {
+            container.innerHTML = `<div class="empty-state"><p>No records match your filter.</p></div>`;
+            return;
+        }
+
+        container.innerHTML = `
+            <div style="font-size:.75rem;color:var(--text-secondary);padding:8px 16px">Showing ${data.records.length} of ${data.total} records</div>
+            <table style="font-size:.82rem">
+                <thead><tr>
+                    <th>Row</th><th>Status</th><th>Name</th><th>Issue</th><th>Details</th>
+                </tr></thead>
+                <tbody>
+                    ${data.records.map(r => {
+                        const isFailed = r.status === "failed";
+                        const rowStyle = isFailed ? 'background:#fff5f5;' : '';
+                        const errorTooltip = r.error_message ? `title="${escapeHtml(r.error_message)}"` : '';
+                        return `<tr style="${rowStyle}" ${errorTooltip}>
+                            <td>${r.row_number}</td>
+                            <td>${isFailed ? '<span class="badge badge-stopped" style="font-size:.68rem">❌ Failed</span>' : '<span class="badge badge-proceed" style="font-size:.68rem">✅ Success</span>'}</td>
+                            <td><strong>${escapeHtml(r.record_name || "—")}</strong></td>
+                            <td>${isFailed ? `<span style="color:var(--danger);font-size:.75rem" title="${escapeHtml(r.error_message || '')}">${escapeHtml(r.issue_type || "error")}</span>` : "—"}</td>
+                            <td style="font-size:.72rem;color:var(--text-secondary);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(r.error_message || '')}">${isFailed ? escapeHtml(r.error_message || "") : "✓"}</td>
+                        </tr>`;
+                    }).join("")}
+                </tbody>
+            </table>`;
+    } catch (e) { toast("Failed to load records: " + e.message, "error"); }
+}
+
+function handleImportRecordSearch() {
+    clearTimeout(importRecordSearchTimeout);
+    importRecordSearchTimeout = setTimeout(() => loadImportRecords(), 300);
+}
+
+function exportImportRecords(format) {
+    if (!currentHistoryId) return;
+    const status = document.getElementById("importRecordStatusFilter")?.value || "";
+    let url = `${API}/excel/import-history/${currentHistoryId}/export?format=${format}`;
+    if (status) url += `&status=${status}`;
+    window.open(url, "_blank");
+}
+
+function exportImportRecordsById(historyId, status, format) {
+    let url = `${API}/excel/import-history/${historyId}/export?format=${format}`;
+    if (status) url += `&status=${status}`;
+    window.open(url, "_blank");
+}
+
+// ===== IMPORT SCHEDULE =====
+function openScheduleModal() {
+    document.getElementById("scheduleModal").classList.add("open");
+    loadCurrentSchedules();
+}
+function closeScheduleModal() { document.getElementById("scheduleModal").classList.remove("open"); }
+
+async function loadCurrentSchedules() {
+    try {
+        const items = await api("/excel/schedule");
+        const container = document.getElementById("currentSchedules");
+        if (!items.length) { container.innerHTML = `<p style="font-size:.78rem;color:var(--text-secondary)">No schedules configured.</p>`; return; }
+        container.innerHTML = `
+            <h4 style="font-size:.85rem;margin-bottom:8px">Current Schedules</h4>
+            <table style="font-size:.78rem">
+                <thead><tr><th>Type</th><th>Interval</th><th>Next Run</th><th></th></tr></thead>
+                <tbody>${items.map(s => `<tr>
+                    <td><span class="badge badge-proceed">${s.import_type}</span></td>
+                    <td>${s.interval}</td>
+                    <td>${s.next_run ? new Date(s.next_run).toLocaleString() : "—"}</td>
+                    <td><button class="btn-danger" style="padding:2px 6px;font-size:.65rem" onclick="deleteSchedule(${s.id})">🗑</button></td>
+                </tr>`).join("")}</tbody>
+            </table>`;
+    } catch (_) {}
+}
+
+async function saveSchedule() {
+    const importType = document.getElementById("fScheduleType").value;
+    const interval = document.getElementById("fScheduleInterval").value;
+    const email = document.getElementById("fScheduleEmail").value.trim();
+    const inApp = document.getElementById("fScheduleInApp").checked;
+    try {
+        let url = `/excel/schedule?import_type=${importType}&interval=${interval}&notify_in_app=${inApp}`;
+        if (email) url += `&notify_email=${encodeURIComponent(email)}`;
+        await api(url, { method: "POST" });
+        toast(`Schedule for ${importType} saved (${interval}).`);
+        loadCurrentSchedules();
+    } catch (e) { toast("Failed to save schedule: " + e.message, "error"); }
+}
+
+async function deleteSchedule(id) {
+    if (!confirm("Delete this schedule?")) return;
+    try { await api(`/excel/schedule/${id}`, { method: "DELETE" }); toast("Schedule deleted."); loadCurrentSchedules(); }
+    catch (e) { toast("Failed: " + e.message, "error"); }
 }
 
 // ===== Health & Analytics Config =====
@@ -1127,5 +1627,8 @@ document.addEventListener("DOMContentLoaded", () => {
     loadAllMedia();
     loadStatusDefinitions();
     checkAnalyticsConfig();
-    loadDashboard();
+
+    // Route to the page specified in URL path, or default to dashboard
+    const initialPage = getPageFromURL() || "dashboard";
+    navigateToPage(initialPage);
 });

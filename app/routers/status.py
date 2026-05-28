@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from app.database import get_db
-from app.models.media import MediaStatus, MediaContent, StatusDefinition
+from app.models.media import MediaStatus, MediaContent, StatusDefinition, MediaLink
 from app.schemas.media import (
     MediaStatusCreate,
     MediaStatusUpdate,
@@ -101,6 +101,72 @@ def list_statuses(
 def get_valid_statuses(db: Session = Depends(get_db)):
     """Return list of valid status values for dropdown (dynamically from status_definitions)."""
     return {"statuses": get_valid_status_names(db)}
+
+
+# ---------- SEARCH (Media + Links combined) ----------
+@router.get("/search-all", summary="Search media and links for Add Status")
+def search_media_and_links(
+    q: str = Query(..., min_length=2, description="Search query (min 2 chars)"),
+    db: Session = Depends(get_db),
+):
+    """
+    Search media by name AND links by URL/media_name.
+    Returns combined results so user can pick from either source.
+    Used in the Add Status popup for quick lookup.
+    """
+    # Search media by name
+    media_results = db.query(MediaContent).filter(
+        MediaContent.media_name.ilike(f"%{q}%")
+    ).limit(10).all()
+
+    # Search links by URL or by associated media name
+    link_results = db.query(MediaLink).filter(
+        (MediaLink.url.ilike(f"%{q}%")) |
+        (MediaLink.description.ilike(f"%{q}%"))
+    ).limit(10).all()
+
+    # Also search links via media name
+    media_name_ids = [m.id for m in media_results]
+    link_by_media = db.query(MediaLink).filter(
+        MediaLink.media_id.in_(media_name_ids)
+    ).limit(10).all() if media_name_ids else []
+
+    # Combine link results, dedup by id
+    link_ids_seen = set()
+    all_links = []
+    for lnk in link_results + link_by_media:
+        if lnk.id not in link_ids_seen:
+            link_ids_seen.add(lnk.id)
+            all_links.append(lnk)
+
+    # Load media map for link results
+    link_media_ids = {lnk.media_id for lnk in all_links}
+    media_map = {m.id: m for m in db.query(MediaContent).filter(MediaContent.id.in_(link_media_ids)).all()} if link_media_ids else {}
+
+    return {
+        "media": [
+            {
+                "id": m.id,
+                "media_name": m.media_name,
+                "media_category": m.media_category,
+                "source": "media",
+            }
+            for m in media_results
+        ],
+        "links": [
+            {
+                "link_id": lnk.id,
+                "media_id": lnk.media_id,
+                "media_name": media_map[lnk.media_id].media_name if lnk.media_id in media_map else f"#{lnk.media_id}",
+                "media_category": media_map[lnk.media_id].media_category if lnk.media_id in media_map else "",
+                "platform": lnk.platform,
+                "url": lnk.url,
+                "link_status": lnk.link_status,
+                "source": "link",
+            }
+            for lnk in all_links[:15]
+        ],
+    }
 
 
 # ---------- UPDATE ----------

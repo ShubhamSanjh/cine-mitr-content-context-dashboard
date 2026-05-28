@@ -150,3 +150,25 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 async def serve_ui():
     """Serve the main UI page."""
     return FileResponse(os.path.join(static_dir, "index.html"))
+
+
+# --- Page routes: direct URL access to specific pages ---
+# e.g. /dashboard, /media, /links, /status-tracking, etc.
+PAGE_ROUTES = [
+    "dashboard", "media", "links", "status-tracking", "status-mgmt",
+    "content-calendar", "reminders", "analytics", "reports",
+    "statistics", "tasks", "import-history",
+]
+
+
+@app.get("/{page}", include_in_schema=False)
+async def serve_page(page: str):
+    """
+    Serve index.html for known page routes so users can bookmark/share direct URLs.
+    The frontend reads the path and navigates to the correct page via hash routing.
+    """
+    if page in PAGE_ROUTES:
+        return FileResponse(os.path.join(static_dir, "index.html"))
+    # If not a known page, let it 404
+    return JSONResponse(status_code=404, content={"detail": "Page not found"})
+

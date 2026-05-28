@@ -30,9 +30,6 @@
         <div class="nav-item" data-page="status-tracking">
             <span class="icon">📋</span> Content Ideas & Status
         </div>
-        <div class="nav-item" data-page="status-mgmt">
-            <span class="icon">🏷️</span> Status Management
-        </div>
 
         <div class="nav-section">Content</div>
         <div class="nav-item" data-page="media">
@@ -66,6 +63,12 @@
         </div>
 
         <div class="nav-section">System</div>
+        <div class="nav-item" data-page="status-mgmt">
+            <span class="icon">🏷️</span> Status Management
+        </div>
+        <div class="nav-item" data-page="import-history">
+            <span class="icon">📦</span> Import History
+        </div>
         <div class="nav-item" data-page="api-docs">
             <span class="icon">📘</span> API Docs
         </div>
@@ -379,6 +382,46 @@
             </p>
         </div>
     </div>
+
+    <!-- Page: Import History -->
+    <div class="content-area" id="page-import-history" style="display:none;">
+        <div class="page-actions">
+            <select id="importHistoryTypeFilter" onchange="loadImportHistory()">
+                <option value="">All Types</option>
+                <option value="media">Media</option>
+                <option value="links">Links</option>
+                <option value="status">Status</option>
+            </select>
+            <button class="btn-outline" onclick="loadImportHistory()">↻ Refresh</button>
+            <button class="btn-outline" onclick="openScheduleModal()">⏰ Schedule Import</button>
+        </div>
+        <!-- Last Import Summary -->
+        <div id="importHistorySummary" style="margin-bottom:16px"></div>
+        <!-- History List -->
+        <div class="card">
+            <div class="card-header"><h3>Import Runs</h3></div>
+            <div id="importHistoryTable"></div>
+        </div>
+        <!-- Detailed Records (shown when user clicks on an import run) -->
+        <div id="importRecordsSection" style="display:none;margin-top:16px">
+            <div class="card">
+                <div class="card-header">
+                    <h3 id="importRecordsTitle">Import Records</h3>
+                    <div style="display:flex;gap:8px;align-items:center">
+                        <select id="importRecordStatusFilter" onchange="loadImportRecords()">
+                            <option value="">All Status</option>
+                            <option value="success">✅ Success</option>
+                            <option value="failed">❌ Failed</option>
+                        </select>
+                        <input type="text" class="search-input" id="importRecordSearch" placeholder="🔍 Search records..." onkeyup="handleImportRecordSearch()" style="width:200px" />
+                        <button class="btn-outline" onclick="exportImportRecords('csv')">📥 CSV</button>
+                        <button class="btn-outline" onclick="exportImportRecords('excel')">📥 Excel</button>
+                    </div>
+                </div>
+                <div id="importRecordsTable"></div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- ==================== MEDIA MODAL ==================== -->
@@ -528,12 +571,16 @@
         <div class="modal-body">
             <input type="hidden" id="statusEditId" />
             <div class="form-group">
-                <label>Media * <small>(type to search)</small></label>
+                <label>Search Media or Links * <small>(type media name or link URL)</small></label>
                 <div class="autocomplete-wrapper">
-                    <input type="text" id="fStatusMediaSearch" placeholder="Start typing media name..." autocomplete="off" oninput="searchMediaForStatus()" />
+                    <input type="text" id="fStatusMediaSearch" placeholder="Search by media name or link URL..." autocomplete="off" oninput="searchMediaForStatus()" />
                     <input type="hidden" id="fStatusMediaId" />
                     <div class="autocomplete-dropdown" id="statusMediaSearchDropdown"></div>
                 </div>
+            </div>
+            <div class="form-group" id="statusLinkInfo" style="display:none;">
+                <label>Linked From</label>
+                <div id="statusLinkDetails" class="link-info-badge"></div>
             </div>
             <div class="form-group">
                 <label>Media Category</label>
@@ -713,6 +760,64 @@
         <div class="modal-footer">
             <button class="btn-outline" onclick="closeStatusDefModal()">Cancel</button>
             <button class="btn-primary" onclick="saveStatusDef()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== SCHEDULE MODAL ==================== -->
+<div class="modal-overlay" id="scheduleModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3>⏰ Schedule Import</h3>
+            <button class="modal-close" onclick="closeScheduleModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>Import Type</label>
+                <select id="fScheduleType">
+                    <option value="media">Media</option>
+                    <option value="links">Links</option>
+                    <option value="status">Status</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Interval</label>
+                <select id="fScheduleInterval">
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Notification Email (optional)</label>
+                <input type="email" id="fScheduleEmail" placeholder="user@example.com" />
+            </div>
+            <div class="form-group">
+                <label><input type="checkbox" id="fScheduleInApp" checked /> In-App Notification</label>
+            </div>
+            <!-- Current schedules -->
+            <div id="currentSchedules" style="margin-top:16px"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-outline" onclick="closeScheduleModal()">Cancel</button>
+            <button class="btn-primary" onclick="saveSchedule()">Save Schedule</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== IMPORT RESULTS MODAL ==================== -->
+<div class="modal-overlay" id="importResultsModal">
+    <div class="modal" style="max-width:800px;width:800px">
+        <div class="modal-header">
+            <h3 id="importResultsTitle">📊 Import Results</h3>
+            <button class="modal-close" onclick="closeImportResultsModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="importResultsBody">
+            <!-- Dynamically filled by JS -->
+        </div>
+        <div class="modal-footer">
+            <button class="btn-outline" onclick="goToImportHistory()">📋 View Import History</button>
+            <button class="btn-primary" onclick="closeImportResultsModal()">Close</button>
         </div>
     </div>
 </div>

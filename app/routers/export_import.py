@@ -2,18 +2,22 @@
 Excel Export, Import, and Template endpoints.
 Supports: Media, Links, Status Tracking data.
 Uses openpyxl for .xlsx generation and parsing.
+Includes: Import History tracking, Export errors, Scheduling.
 """
 
 import io
-from datetime import datetime, date as date_type
+import csv
+from datetime import datetime, date as date_type, timedelta
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import desc
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 from app.database import get_db
 from app.models.media import MediaContent, MediaLink, MediaStatus
+from app.models.import_history import ImportHistory, ImportRecord, ImportSchedule
 
 router = APIRouter(prefix="/excel")
 
@@ -132,7 +136,7 @@ def export_links_excel(
     wb = Workbook()
     ws = wb.active
     ws.title = "Links"
-    headers = ["ID", "Media Name", "Media Category", "Platform", "URL", "Description", "Status", "Category", "Created At"]
+    headers = ["ID", "Media Name", "Media Category", "Platform", "URL", "Description", "Status", "Link Category", "Created At"]
     style_header(ws, headers)
 
     for row, lnk in enumerate(items, 2):
@@ -205,16 +209,20 @@ def download_links_template():
     wb = Workbook()
     ws = wb.active
     ws.title = "Links Import"
-    headers = ["media_name", "platform", "url", "description", "link_status"]
+    headers = ["media_name", "media_category", "platform", "url", "description", "link_status"]
     style_header(ws, headers)
     examples = [
-        ["The Dark Knight", "youtube", "https://youtube.com/watch?v=abc123", "Official trailer", "active"],
-        ["Breaking Bad", "netflix", "https://netflix.com/title/123", "Full series", "active"],
+        ["The Dark Knight", "movies", "youtube", "https://youtube.com/watch?v=abc123", "Official trailer", "active"],
+        ["Breaking Bad", "webseries", "netflix", "https://netflix.com/title/123", "Full series", "active"],
+        ["New Content", "", "instagram", "https://instagram.com/p/xyz", "Promo post", "active"],
     ]
     for row, ex in enumerate(examples, 2):
         for col, val in enumerate(ex, 1):
             cell = ws.cell(row=row, column=col, value=val)
             cell.font = Font(italic=True, color="888888")
+    # Add a note about media_category being optional
+    ws.cell(row=6, column=1, value="Note: media_category is optional. If media doesn't exist, it will be auto-created (visible on Media tab).")
+    ws.cell(row=6, column=1).font = Font(italic=True, color="FF6600", size=10)
     auto_width(ws)
     return workbook_to_response(wb, "links_import_template.xlsx")
 
@@ -240,55 +248,184 @@ def download_status_template():
 
 # ==================== IMPORT ====================
 
+BATCH_SIZE = 100  # Commit every N records for performance
+
+
+def _persist_import_history(db: Session, import_type: str, file_name: str,
+                            total_rows: int, total_processed: int,
+                            successful: int, failed: int, skipped: int,
+                            errors: list, success_records: list):
+    """Save import run + individual record results to DB for history tracking."""
+    success_rate = round((successful / total_processed * 100)) if total_processed > 0 else 0
+
+    history = ImportHistory(
+        import_type=import_type,
+        file_name=file_name,
+        total_rows=total_rows,
+        total_processed=total_processed,
+        successful=successful,
+        failed=failed,
+        skipped_empty=skipped,
+        success_rate=success_rate,
+    )
+    db.add(history)
+    db.flush()  # Get the ID
+
+    # Store failed records
+    for err in errors:
+        rec = ImportRecord(
+            history_id=history.id,
+            row_number=err["row"],
+            status="failed",
+            record_name=err["data"].get("media_name") or err["data"].get("url") or "",
+            record_data=err["data"],
+            error_message=err["issue"],
+            issue_type=err["issue_type"],
+        )
+        db.add(rec)
+
+    # Store successful records (just name/row for reference)
+    for sr in success_records:
+        rec = ImportRecord(
+            history_id=history.id,
+            row_number=sr["row"],
+            status="success",
+            record_name=sr["name"],
+            record_data=sr.get("data"),
+        )
+        db.add(rec)
+
+    db.commit()
+    return history.id
+
+
 @router.post("/import/media", summary="Import media from Excel")
 async def import_media_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Only .xlsx files are accepted")
 
     content = await file.read()
-    wb = load_workbook(io.BytesIO(content))
+    wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     ws = wb.active
 
     rows = list(ws.iter_rows(min_row=2, values_only=True))
-    created, errors = 0, []
+    wb.close()
+
+    # --- Pre-load ALL existing media names in one query (fast bulk check) ---
+    existing_names_rows = db.query(MediaContent.media_name).all()
+    existing_names = {name.lower() for (name,) in existing_names_rows}
+
+    # Track names seen within this file to catch intra-file duplicates
+    seen_in_batch = set()
+
+    created, skipped = 0, 0
+    errors = []
+    success_records = []
+    pending_records = []
 
     for i, row in enumerate(rows, 2):
         try:
-            if not row or not row[0] or not row[1]:
-                continue  # skip empty rows
-            category = str(row[0]).strip().lower()
-            name = str(row[1]).strip().title()
-            if not name:
-                errors.append(f"Row {i}: media_name is required")
+            if not row or all(cell is None or str(cell).strip() == "" for cell in row[:2]):
+                skipped += 1
                 continue
 
-            # Skip duplicates by name (case-insensitive)
-            existing = db.query(MediaContent).filter(
-                MediaContent.media_name.ilike(name)
-            ).first()
-            if existing:
-                errors.append(f"Row {i}: Media '{name}' already exists (id={existing.id}), skipped")
+            category = str(row[0]).strip().lower() if row[0] else ""
+            name = str(row[1]).strip().title() if row[1] else ""
+            row_data = {
+                "media_category": category,
+                "media_name": name,
+                "release_date": str(row[2]) if len(row) > 2 and row[2] else "",
+                "genre": str(row[3]).strip() if len(row) > 3 and row[3] else "",
+                "director": str(row[4]).strip() if len(row) > 4 and row[4] else "",
+                "rating": str(row[6]) if len(row) > 6 and row[6] else "",
+            }
+
+            if not category:
+                errors.append({"row": i, "data": row_data, "issue": "media_category is required", "issue_type": "missing_field"})
                 continue
+            if not name:
+                errors.append({"row": i, "data": row_data, "issue": "media_name is required", "issue_type": "missing_field"})
+                continue
+
+            name_lower = name.lower()
+
+            # Check against intra-file duplicates (same name appearing multiple times in this sheet)
+            if name_lower in seen_in_batch:
+                errors.append({"row": i, "data": row_data, "issue": f"Duplicate within file: '{name}' already appears earlier in this sheet", "issue_type": "duplicate_in_file"})
+                continue
+
+            # Check against DB existing names
+            if name_lower in existing_names:
+                errors.append({"row": i, "data": row_data, "issue": f"Media '{name}' already exists in database", "issue_type": "duplicate"})
+                continue
+
+            # Validate rating range
+            rating_val = None
+            if len(row) > 6 and row[6] is not None and str(row[6]).strip() not in ("None", ""):
+                try:
+                    rating_val = float(row[6])
+                    if rating_val < 0 or rating_val > 10:
+                        errors.append({"row": i, "data": row_data, "issue": f"Rating {rating_val} is out of range (0-10)", "issue_type": "validation"})
+                        continue
+                except (ValueError, TypeError):
+                    errors.append({"row": i, "data": row_data, "issue": f"Invalid rating value: '{row[6]}'", "issue_type": "validation"})
+                    continue
 
             record = MediaContent(
                 media_category=category,
                 media_name=name,
-                release_date=_parse_date(row[2]),
-                genre=str(row[3]).strip() if row[3] else None,
-                director=str(row[4]).strip() if row[4] else None,
-                cast_members=str(row[5]).strip() if row[5] else None,
-                rating=float(row[6]) if row[6] is not None and str(row[6]).strip() not in ("None", "") else None,
+                release_date=_parse_date(row[2] if len(row) > 2 else None),
+                genre=str(row[3]).strip() if len(row) > 3 and row[3] else None,
+                director=str(row[4]).strip() if len(row) > 4 and row[4] else None,
+                cast_members=str(row[5]).strip() if len(row) > 5 and row[5] else None,
+                rating=rating_val,
                 review=str(row[7]).strip() if len(row) > 7 and row[7] else None,
                 is_available=str(row[8]).strip().lower() if len(row) > 8 and row[8] and str(row[8]).strip().lower() in ("true", "false") else "false",
                 available_on=str(row[9]).strip() if len(row) > 9 and row[9] else None,
             )
-            db.add(record)
+            pending_records.append(record)
+            seen_in_batch.add(name_lower)
+            existing_names.add(name_lower)  # Prevent later rows from duplicating
+            success_records.append({"row": i, "name": name, "data": row_data})
             created += 1
-        except Exception as e:
-            errors.append(f"Row {i}: {str(e)}")
 
-    db.commit()
-    return {"message": f"Imported {created} media items", "created": created, "errors": errors}
+            # Commit in batches for performance
+            if len(pending_records) >= BATCH_SIZE:
+                db.add_all(pending_records)
+                db.commit()
+                pending_records = []
+
+        except Exception as e:
+            row_data = {"media_category": str(row[0]) if row and row[0] else "", "media_name": str(row[1]) if row and len(row) > 1 and row[1] else ""}
+            errors.append({"row": i, "data": row_data, "issue": str(e), "issue_type": "exception"})
+
+    # Commit remaining records
+    if pending_records:
+        db.add_all(pending_records)
+        db.commit()
+
+    total_processed = len(rows) - skipped
+
+    # Persist import history
+    history_id = _persist_import_history(
+        db, "media", file.filename or "unknown.xlsx",
+        len(rows), total_processed, created, len(errors), skipped,
+        errors, success_records
+    )
+
+    return {
+        "message": f"Imported {created} media items",
+        "import_history_id": history_id,
+        "summary": {
+            "total_rows": len(rows),
+            "total_processed": total_processed,
+            "successful": created,
+            "failed": len(errors),
+            "skipped_empty": skipped,
+        },
+        "created": created,
+        "errors": errors,
+    }
 
 
 @router.post("/import/links", summary="Import links from Excel")
@@ -297,53 +434,124 @@ async def import_links_excel(file: UploadFile = File(...), db: Session = Depends
         raise HTTPException(status_code=400, detail="Only .xlsx files are accepted")
 
     content = await file.read()
-    wb = load_workbook(io.BytesIO(content))
+    wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     ws = wb.active
 
-    # Build media name->id map
+    # Build media name->id map (one query)
     all_media = db.query(MediaContent).all()
     media_map = {m.media_name.lower(): m for m in all_media}
 
+    # Pre-load ALL existing URLs in one query
+    existing_urls_rows = db.query(MediaLink.url).all()
+    existing_urls = {url for (url,) in existing_urls_rows}
+
     rows = list(ws.iter_rows(min_row=2, values_only=True))
-    created, errors = 0, []
+    wb.close()
+
+    created, skipped = 0, 0
+    errors = []
+    success_records = []
+    pending_records = []
+    seen_urls = set()
 
     for i, row in enumerate(rows, 2):
         try:
-            if not row or not row[0] or not row[2]:
+            if not row or all(cell is None or str(cell).strip() == "" for cell in row[:4]):
+                skipped += 1
                 continue
-            media_name = str(row[0]).strip().lower()
-            media = media_map.get(media_name)
+
+            # Template columns: media_name, media_category, platform, url, description, link_status
+            media_name_raw = str(row[0]).strip() if row[0] else ""
+            media_category_raw = str(row[1]).strip().lower() if len(row) > 1 and row[1] and str(row[1]).strip() else ""
+            platform_raw = str(row[2]).strip().lower() if len(row) > 2 and row[2] else "other"
+            url_raw = str(row[3]).strip() if len(row) > 3 and row[3] else ""
+            description_raw = str(row[4]).strip() if len(row) > 4 and row[4] else None
+            link_status_raw = str(row[5]).strip().lower() if len(row) > 5 and row[5] else "active"
+
+            row_data = {
+                "media_name": media_name_raw,
+                "media_category": media_category_raw,
+                "platform": platform_raw,
+                "url": url_raw,
+            }
+
+            if not media_name_raw:
+                errors.append({"row": i, "data": row_data, "issue": "media_name is required", "issue_type": "missing_field"})
+                continue
+            if not url_raw:
+                errors.append({"row": i, "data": row_data, "issue": "URL is required", "issue_type": "missing_field"})
+                continue
+
+            media = media_map.get(media_name_raw.lower()) or media_map.get(media_name_raw.title().lower())
+
+            # Auto-create media entry if not found
             if not media:
-                # Try title-case match
-                media = media_map.get(media_name.title().lower())
-            if not media:
-                errors.append(f"Row {i}: Media '{row[0]}' not found. Create it first.")
+                category_to_use = media_category_raw if media_category_raw else "uncategorized"
+                new_media = MediaContent(
+                    media_category=category_to_use,
+                    media_name=media_name_raw.title(),
+                )
+                db.add(new_media)
+                db.flush()  # Get ID without full commit
+                media = new_media
+                media_map[media_name_raw.lower()] = media  # Cache for next rows
+
+            # Check against DB existing URLs
+            if url_raw in existing_urls:
+                errors.append({"row": i, "data": row_data, "issue": "Link URL already exists in database", "issue_type": "duplicate"})
+                continue
+
+            # Check intra-file duplicate URLs
+            if url_raw in seen_urls:
+                errors.append({"row": i, "data": row_data, "issue": "Duplicate URL within this file", "issue_type": "duplicate_in_file"})
                 continue
 
             record = MediaLink(
                 media_id=media.id,
-                platform=str(row[1]).strip().lower() if row[1] else "other",
-                url=str(row[2]).strip(),
-                description=str(row[3]).strip() if len(row) > 3 and row[3] else None,
-                link_status=str(row[4]).strip().lower() if len(row) > 4 and row[4] else "active",
+                platform=platform_raw,
+                url=url_raw,
+                description=description_raw,
+                link_status=link_status_raw,
                 link_category=media.media_category,
             )
-
-            # Skip duplicate URLs
-            existing_link = db.query(MediaLink).filter(
-                MediaLink.url == record.url
-            ).first()
-            if existing_link:
-                errors.append(f"Row {i}: Link URL already exists (link_id={existing_link.id}), skipped")
-                continue
-
-            db.add(record)
+            pending_records.append(record)
+            seen_urls.add(url_raw)
+            existing_urls.add(url_raw)
+            success_records.append({"row": i, "name": url_raw, "data": row_data})
             created += 1
-        except Exception as e:
-            errors.append(f"Row {i}: {str(e)}")
 
-    db.commit()
-    return {"message": f"Imported {created} links", "created": created, "errors": errors}
+            if len(pending_records) >= BATCH_SIZE:
+                db.add_all(pending_records)
+                db.commit()
+                pending_records = []
+
+        except Exception as e:
+            row_data = {"media_name": str(row[0]) if row and row[0] else "", "url": str(row[3]) if row and len(row) > 3 and row[3] else ""}
+            errors.append({"row": i, "data": row_data, "issue": str(e), "issue_type": "exception"})
+
+    if pending_records:
+        db.add_all(pending_records)
+        db.commit()
+
+    total_processed = len(rows) - skipped
+    history_id = _persist_import_history(
+        db, "links", file.filename or "unknown.xlsx",
+        len(rows), total_processed, created, len(errors), skipped,
+        errors, success_records
+    )
+    return {
+        "message": f"Imported {created} links",
+        "import_history_id": history_id,
+        "summary": {
+            "total_rows": len(rows),
+            "total_processed": total_processed,
+            "successful": created,
+            "failed": len(errors),
+            "skipped_empty": skipped,
+        },
+        "created": created,
+        "errors": errors,
+    }
 
 
 @router.post("/import/status", summary="Import status tracking from Excel")
@@ -352,39 +560,87 @@ async def import_status_excel(file: UploadFile = File(...), db: Session = Depend
         raise HTTPException(status_code=400, detail="Only .xlsx files are accepted")
 
     content = await file.read()
-    wb = load_workbook(io.BytesIO(content))
+    wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     ws = wb.active
 
     all_media = db.query(MediaContent).all()
     media_map = {m.media_name.lower(): m for m in all_media}
 
     rows = list(ws.iter_rows(min_row=2, values_only=True))
-    created, errors = 0, []
+    wb.close()
+
+    created, skipped = 0, 0
+    errors = []
+    success_records = []
+    pending_records = []
 
     for i, row in enumerate(rows, 2):
         try:
-            if not row or not row[0] or not row[1]:
+            if not row or all(cell is None or str(cell).strip() == "" for cell in row[:2]):
+                skipped += 1
                 continue
-            media_name = str(row[0]).strip().lower()
-            media = media_map.get(media_name)
+
+            media_name_raw = str(row[0]).strip() if row[0] else ""
+            status_raw = str(row[1]).strip().lower() if len(row) > 1 and row[1] else ""
+            row_data = {
+                "media_name": media_name_raw,
+                "status": status_raw,
+                "notes": str(row[2]).strip() if len(row) > 2 and row[2] else "",
+            }
+
+            if not media_name_raw:
+                errors.append({"row": i, "data": row_data, "issue": "media_name is required", "issue_type": "missing_field"})
+                continue
+            if not status_raw:
+                errors.append({"row": i, "data": row_data, "issue": "status is required", "issue_type": "missing_field"})
+                continue
+
+            media = media_map.get(media_name_raw.lower()) or media_map.get(media_name_raw.title().lower())
             if not media:
-                media = media_map.get(media_name.title().lower())
-            if not media:
-                errors.append(f"Row {i}: Media '{row[0]}' not found. Create it first.")
+                errors.append({"row": i, "data": row_data, "issue": f"Media '{media_name_raw}' not found. Create it first.", "issue_type": "reference_missing"})
                 continue
 
             record = MediaStatus(
                 media_id=media.id,
-                status=str(row[1]).strip().lower(),
+                status=status_raw,
                 notes=str(row[2]).strip() if len(row) > 2 and row[2] else None,
             )
-            db.add(record)
+            pending_records.append(record)
+            success_records.append({"row": i, "name": media_name_raw, "data": row_data})
             created += 1
-        except Exception as e:
-            errors.append(f"Row {i}: {str(e)}")
 
-    db.commit()
-    return {"message": f"Imported {created} status entries", "created": created, "errors": errors}
+            if len(pending_records) >= BATCH_SIZE:
+                db.add_all(pending_records)
+                db.commit()
+                pending_records = []
+
+        except Exception as e:
+            row_data = {"media_name": str(row[0]) if row and row[0] else "", "status": str(row[1]) if row and len(row) > 1 and row[1] else ""}
+            errors.append({"row": i, "data": row_data, "issue": str(e), "issue_type": "exception"})
+
+    if pending_records:
+        db.add_all(pending_records)
+        db.commit()
+
+    total_processed = len(rows) - skipped
+    history_id = _persist_import_history(
+        db, "status", file.filename or "unknown.xlsx",
+        len(rows), total_processed, created, len(errors), skipped,
+        errors, success_records
+    )
+    return {
+        "message": f"Imported {created} status entries",
+        "import_history_id": history_id,
+        "summary": {
+            "total_rows": len(rows),
+            "total_processed": total_processed,
+            "successful": created,
+            "failed": len(errors),
+            "skipped_empty": skipped,
+        },
+        "created": created,
+        "errors": errors,
+    }
 
 
 # ==================== FULL EXPORT (Category + Tags tabs) ====================
@@ -455,4 +711,195 @@ def export_full_excel(db: Session = Depends(get_db)):
         wb.create_sheet(title="Empty")
 
     return workbook_to_response(wb, f"full_export_{datetime.now().strftime('%Y%m%d')}.xlsx")
+
+
+# ==================== IMPORT HISTORY ====================
+
+@router.get("/import-history", summary="List import history")
+def list_import_history(
+    import_type: str | None = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """List all past import runs, most recent first."""
+    query = db.query(ImportHistory)
+    if import_type:
+        query = query.filter(ImportHistory.import_type == import_type)
+    items = query.order_by(desc(ImportHistory.created_at)).limit(limit).all()
+    return [
+        {
+            "id": h.id,
+            "import_type": h.import_type,
+            "file_name": h.file_name,
+            "total_rows": h.total_rows,
+            "total_processed": h.total_processed,
+            "successful": h.successful,
+            "failed": h.failed,
+            "skipped_empty": h.skipped_empty,
+            "success_rate": h.success_rate,
+            "created_at": h.created_at.isoformat() if h.created_at else None,
+        }
+        for h in items
+    ]
+
+
+@router.get("/import-history/{history_id}/records", summary="Get records for a specific import")
+def get_import_records(
+    history_id: int,
+    status: str | None = Query(None, description="Filter: success, failed, skipped"),
+    search: str | None = Query(None, description="Search record names"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    """Get individual record results for a specific import run with filter/search."""
+    query = db.query(ImportRecord).filter(ImportRecord.history_id == history_id)
+    if status:
+        query = query.filter(ImportRecord.status == status)
+    if search:
+        query = query.filter(ImportRecord.record_name.ilike(f"%{search}%"))
+
+    total = query.count()
+    items = query.order_by(ImportRecord.row_number).offset((page - 1) * page_size).limit(page_size).all()
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "records": [
+            {
+                "id": r.id,
+                "row_number": r.row_number,
+                "status": r.status,
+                "record_name": r.record_name,
+                "record_data": r.record_data,
+                "error_message": r.error_message,
+                "issue_type": r.issue_type,
+            }
+            for r in items
+        ],
+    }
+
+
+@router.get("/import-history/{history_id}/export", summary="Export import records as CSV")
+def export_import_records(
+    history_id: int,
+    status: str | None = Query(None, description="Filter: success, failed"),
+    format: str = Query("csv", description="Export format: csv or excel"),
+    db: Session = Depends(get_db),
+):
+    """Export records from a specific import as CSV or Excel for user to fix and re-upload."""
+    history = db.query(ImportHistory).filter(ImportHistory.id == history_id).first()
+    if not history:
+        raise HTTPException(status_code=404, detail="Import history not found")
+
+    query = db.query(ImportRecord).filter(ImportRecord.history_id == history_id)
+    if status:
+        query = query.filter(ImportRecord.status == status)
+    records = query.order_by(ImportRecord.row_number).all()
+
+    if format == "excel":
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Import Records"
+        headers = ["Row #", "Status", "Name", "Issue Type", "Error Message", "Data"]
+        style_header(ws, headers)
+        for idx, r in enumerate(records, 2):
+            ws.cell(row=idx, column=1, value=r.row_number)
+            ws.cell(row=idx, column=2, value=r.status)
+            ws.cell(row=idx, column=3, value=r.record_name or "")
+            ws.cell(row=idx, column=4, value=r.issue_type or "")
+            ws.cell(row=idx, column=5, value=r.error_message or "")
+            ws.cell(row=idx, column=6, value=str(r.record_data) if r.record_data else "")
+            # Highlight failed rows in red
+            if r.status == "failed":
+                for col in range(1, 7):
+                    ws.cell(row=idx, column=col).fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
+        auto_width(ws)
+        return workbook_to_response(wb, f"import_records_{history_id}_{status or 'all'}.xlsx")
+    else:
+        # CSV export
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["Row #", "Status", "Name", "Issue Type", "Error Message", "Data"])
+        for r in records:
+            writer.writerow([
+                r.row_number, r.status, r.record_name or "",
+                r.issue_type or "", r.error_message or "",
+                str(r.record_data) if r.record_data else "",
+            ])
+        buf.seek(0)
+        return StreamingResponse(
+            io.BytesIO(buf.getvalue().encode("utf-8")),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=import_records_{history_id}_{status or 'all'}.csv"},
+        )
+
+
+# ==================== IMPORT SCHEDULE ====================
+
+@router.get("/schedule", summary="Get import schedules")
+def get_schedules(db: Session = Depends(get_db)):
+    items = db.query(ImportSchedule).order_by(ImportSchedule.import_type).all()
+    return [
+        {
+            "id": s.id,
+            "import_type": s.import_type,
+            "interval": s.interval,
+            "is_active": s.is_active,
+            "last_run": s.last_run.isoformat() if s.last_run else None,
+            "next_run": s.next_run.isoformat() if s.next_run else None,
+            "notify_email": s.notify_email,
+            "notify_in_app": s.notify_in_app,
+        }
+        for s in items
+    ]
+
+
+@router.post("/schedule", summary="Create or update import schedule")
+def save_schedule(
+    import_type: str = Query(...),
+    interval: str = Query(..., description="daily, weekly, monthly"),
+    notify_email: str | None = Query(None),
+    notify_in_app: bool = Query(True),
+    db: Session = Depends(get_db),
+):
+    """Save or update a schedule config for auto-imports."""
+    if interval not in ("daily", "weekly", "monthly"):
+        raise HTTPException(status_code=400, detail="Interval must be daily, weekly, or monthly")
+
+    existing = db.query(ImportSchedule).filter(ImportSchedule.import_type == import_type).first()
+    now = datetime.now()
+    delta = {"daily": timedelta(days=1), "weekly": timedelta(weeks=1), "monthly": timedelta(days=30)}
+    next_run = now + delta[interval]
+
+    if existing:
+        existing.interval = interval
+        existing.is_active = True
+        existing.notify_email = notify_email
+        existing.notify_in_app = notify_in_app
+        existing.next_run = next_run
+    else:
+        schedule = ImportSchedule(
+            import_type=import_type,
+            interval=interval,
+            is_active=True,
+            next_run=next_run,
+            notify_email=notify_email,
+            notify_in_app=notify_in_app,
+        )
+        db.add(schedule)
+
+    db.commit()
+    return {"message": f"Schedule for {import_type} set to {interval}", "next_run": next_run.isoformat()}
+
+
+@router.delete("/schedule/{schedule_id}", summary="Delete import schedule")
+def delete_schedule(schedule_id: int, db: Session = Depends(get_db)):
+    schedule = db.query(ImportSchedule).filter(ImportSchedule.id == schedule_id).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    db.delete(schedule)
+    db.commit()
+    return {"message": "Schedule deleted"}
 

@@ -35,11 +35,11 @@ def get_valid_status_names(db: Session) -> list[str]:
 # ---------- CREATE ----------
 @router.post("/", response_model=MediaStatusResponse, status_code=201, summary="Create media status")
 def create_status(payload: MediaStatusCreate, db: Session = Depends(get_db)):
-    """Add a status entry. Media is optional — can be linked later."""
-    if payload.media_id:
-        media = db.query(MediaContent).filter(MediaContent.id == payload.media_id).first()
-        if not media:
-            raise HTTPException(status_code=404, detail="Media content not found")
+    """Add a status entry for a media item."""
+    # Verify media exists
+    media = db.query(MediaContent).filter(MediaContent.id == payload.media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media content not found")
 
     valid = get_valid_status_names(db)
     if payload.status not in valid:

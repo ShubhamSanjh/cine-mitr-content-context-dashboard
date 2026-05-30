@@ -61,7 +61,7 @@ class MediaContentPaginatedResponse(BaseModel):
 # ==================== Media Links ====================
 
 class MediaLinkBase(BaseModel):
-    media_id: Optional[int] = Field(None, examples=[1])
+    media_id: int = Field(..., examples=[1])
     platform: str = Field(..., min_length=1, max_length=100, examples=["youtube"])
     url: str = Field(..., min_length=1, examples=["https://youtube.com/watch?v=abc123"])
     description: Optional[str] = Field(None, max_length=500, examples=["Official trailer"])
@@ -94,7 +94,7 @@ class MediaLinkResponse(MediaLinkBase):
 # ==================== Media Status ====================
 
 class MediaStatusBase(BaseModel):
-    media_id: Optional[int] = Field(None, examples=[1])
+    media_id: int = Field(..., examples=[1])
     status: str = Field(..., min_length=1, max_length=50, examples=["in_progress"])
     notes: Optional[str] = Field(None, examples=["Currently being reviewed"])
     tags: Optional[str] = Field(None, max_length=500, examples=["priority, urgent"])
@@ -106,7 +106,6 @@ class MediaStatusCreate(MediaStatusBase):
 
 
 class MediaStatusUpdate(BaseModel):
-    media_id: Optional[int] = None
     status: Optional[str] = Field(None, min_length=1, max_length=50)
     notes: Optional[str] = None
     tags: Optional[str] = None

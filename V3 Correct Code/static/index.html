@@ -96,7 +96,7 @@
                 <option value="shows">Shows</option>
                 <option value="music">Music</option>
             </select>
-            <select id="dashboardDataFilter" onchange="handleDashboardDataFilter()">
+            <select id="dashboardDataFilter" onchange="loadDashboard()">
                 <option value="all">All Data</option>
                 <option value="media">Media Only</option>
                 <option value="links">Links Only</option>
@@ -118,7 +118,7 @@
         </div>
         <div class="card" style="margin-top:20px">
             <div class="card-header">
-                <h3>Recent Activity</h3>
+                <h3>Recent Media</h3>
             </div>
             <div id="recentMediaTable"></div>
         </div>
@@ -511,7 +511,7 @@
                 <input type="url" id="fLinkUrl" placeholder="https://..." />
             </div>
             <div class="form-group">
-                <label>Media Name <small>(optional - type to search)</small></label>
+                <label>Media Name * <small>(type to search)</small></label>
                 <div class="autocomplete-wrapper">
                     <input type="text" id="fLinkMediaSearch" placeholder="Start typing media name..." autocomplete="off" oninput="searchMediaForLink()" />
                     <input type="hidden" id="fLinkMediaId" />
@@ -571,7 +571,7 @@
         <div class="modal-body">
             <input type="hidden" id="statusEditId" />
             <div class="form-group">
-                <label>Search Media or Links <small>(optional - type media name or link URL)</small></label>
+                <label>Search Media or Links * <small>(type media name or link URL)</small></label>
                 <div class="autocomplete-wrapper">
                     <input type="text" id="fStatusMediaSearch" placeholder="Search by media name or link URL..." autocomplete="off" oninput="searchMediaForStatus()" />
                     <input type="hidden" id="fStatusMediaId" />

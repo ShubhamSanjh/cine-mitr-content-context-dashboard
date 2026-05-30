@@ -78,7 +78,7 @@ class MediaLink(Base):
     )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    media_id = Column(Integer, ForeignKey("media_content.id", ondelete="SET NULL"), nullable=True, index=True)
+    media_id = Column(Integer, ForeignKey("media_content.id", ondelete="CASCADE"), nullable=False, index=True)
     platform = Column(String(100), nullable=False, index=True)  # youtube, instagram, twitter, etc.
     url = Column(Text, nullable=False, unique=True)
     description = Column(String(500), nullable=True)
@@ -111,7 +111,7 @@ class MediaStatus(Base):
     __tablename__ = "media_status"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    media_id = Column(Integer, ForeignKey("media_content.id", ondelete="SET NULL"), nullable=True, index=True)
+    media_id = Column(Integer, ForeignKey("media_content.id", ondelete="CASCADE"), nullable=False, index=True)
     status = Column(String(50), nullable=False, index=True)  # reviewed, proceed, stopped, in_progress, revived, planned, cancelled
     notes = Column(Text, nullable=True)
     tags = Column(String(500), nullable=True, index=True)  # Comma-separated tags

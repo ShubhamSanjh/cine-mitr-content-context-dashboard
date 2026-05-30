@@ -26,12 +26,10 @@ router = APIRouter(prefix="/media-links")
 # ---------- CREATE ----------
 @router.post("/", response_model=MediaLinkResponse, status_code=201, summary="Create media link")
 def create_link(payload: MediaLinkCreate, db: Session = Depends(get_db)):
-    """Link an external URL (YouTube, Instagram, Twitter, etc.) to a media item. Media is optional."""
-    media = None
-    if payload.media_id:
-        media = db.query(MediaContent).filter(MediaContent.id == payload.media_id).first()
-        if not media:
-            raise HTTPException(status_code=404, detail="Media content not found")
+    """Link an external URL (YouTube, Instagram, Twitter, etc.) to a media item. Rejects duplicate URLs for the same media."""
+    media = db.query(MediaContent).filter(MediaContent.id == payload.media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media content not found")
 
     # Check for duplicate link (URL must be globally unique)
     existing = db.query(MediaLink).filter(
@@ -45,7 +43,7 @@ def create_link(payload: MediaLinkCreate, db: Session = Depends(get_db)):
 
     # Auto-fill link_category from media category if not provided
     data = payload.model_dump()
-    if not data.get("link_category") and media:
+    if not data.get("link_category"):
         data["link_category"] = media.media_category
 
     record = MediaLink(**data)
@@ -157,7 +155,7 @@ def download_link(link_id: int, db: Session = Depends(get_db)):
     if not record:
         raise HTTPException(status_code=404, detail="Link not found")
 
-    media = db.query(MediaContent).filter(MediaContent.id == record.media_id).first() if record.media_id else None
+    media = db.query(MediaContent).filter(MediaContent.id == record.media_id).first()
 
     metadata = {
         "link_id": record.id,
@@ -228,7 +226,7 @@ def download_all_links(
     all_details = []
 
     for record in links:
-        media = db.query(MediaContent).filter(MediaContent.id == record.media_id).first() if record.media_id else None
+        media = db.query(MediaContent).filter(MediaContent.id == record.media_id).first()
         all_metadata.append({
             "link_id": record.id,
             "media_id": record.media_id,

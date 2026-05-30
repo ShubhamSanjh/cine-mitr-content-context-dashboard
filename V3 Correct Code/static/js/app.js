@@ -253,100 +253,13 @@ async function loadDashboard() {
             datasets: [{ label: "Count", data: statusValues.length ? statusValues : [0], backgroundColor: "#3b82f6", borderRadius: 4 }],
         });
 
-        // Load recent activity — default shows status/ideas data
-        await loadRecentActivity(categoryFilter);
+        let recentParams = "?page_size=10";
+        if (categoryFilter) recentParams += `&media_category=${categoryFilter}`;
+        const recent = await api(`/media/${recentParams}`);
+        renderMediaTable(recent.items, "recentMediaTable");
     } catch (e) {
         console.error("[Dashboard]", e);
         toast("Failed to load dashboard: " + e.message, "error");
-    }
-}
-
-// Handle data filter dropdown — navigate to respective page on specific selection
-function handleDashboardDataFilter() {
-    const val = document.getElementById("dashboardDataFilter").value;
-    if (val === "media") {
-        navigateToPage("media");
-        document.getElementById("dashboardDataFilter").value = "all";
-    } else if (val === "links") {
-        navigateToPage("links");
-        document.getElementById("dashboardDataFilter").value = "all";
-    } else if (val === "status") {
-        navigateToPage("status-tracking");
-        document.getElementById("dashboardDataFilter").value = "all";
-    } else {
-        loadDashboard();
-    }
-}
-
-// Load combined recent activity for dashboard (status/ideas + links + media)
-async function loadRecentActivity(categoryFilter) {
-    try {
-        if (!allMedia.length) await loadAllMedia();
-        const container = document.getElementById("recentMediaTable");
-
-        // Fetch recent data from all 3 sources
-        const [statusItems, linkItems] = await Promise.all([
-            api("/media-status/").catch(() => []),
-            api("/media-links/?").catch(() => []),
-        ]);
-
-        // Build combined activity list
-        let activities = [];
-
-        // Add status/ideas entries
-        (statusItems || []).slice(0, 15).forEach(s => {
-            const media = s.media_id ? allMedia.find(m => m.id === s.media_id) : null;
-            activities.push({
-                type: "status",
-                name: media ? media.media_name : (s.notes ? s.notes.substring(0, 40) : "—"),
-                detail: s.status.replace("_", " "),
-                category: media ? media.media_category : "—",
-                date: s.updated_at || s.created_at,
-                badge_class: `badge-${s.status}`,
-            });
-        });
-
-        // Add link entries
-        (linkItems || []).slice(0, 10).forEach(lnk => {
-            const media = lnk.media_id ? allMedia.find(m => m.id === lnk.media_id) : null;
-            activities.push({
-                type: "link",
-                name: media ? media.media_name : (lnk.description || lnk.url.substring(0, 40)),
-                detail: lnk.platform,
-                category: lnk.link_category || "—",
-                date: lnk.created_at,
-                badge_class: "badge-proceed",
-            });
-        });
-
-        // Sort by date descending
-        activities.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-        // Show top 15
-        activities = activities.slice(0, 15);
-
-        if (!activities.length) {
-            container.innerHTML = `<div class="empty-state"><div class="icon">📋</div><p>No recent activity found.</p></div>`;
-            return;
-        }
-
-        container.innerHTML = `
-            <table>
-                <thead><tr><th>Type</th><th>Name</th><th>Detail</th><th>Category</th><th>Date</th></tr></thead>
-                <tbody>
-                    ${activities.map(a => `<tr>
-                        <td><span class="badge ${a.type === 'status' ? 'badge-in_progress' : 'badge-proceed'}" style="font-size:.65rem">${a.type === 'status' ? '📋 Idea' : '🔗 Link'}</span></td>
-                        <td><strong>${escapeHtml(a.name)}</strong></td>
-                        <td><span class="badge ${a.badge_class}" style="font-size:.7rem">${escapeHtml(a.detail)}</span></td>
-                        <td>${escapeHtml(a.category)}</td>
-                        <td style="font-size:.75rem;color:var(--text-muted)">${new Date(a.date).toLocaleDateString()}</td>
-                    </tr>`).join("")}
-                </tbody>
-            </table>
-        `;
-    } catch (e) {
-        console.error("[RecentActivity]", e);
-        document.getElementById("recentMediaTable").innerHTML = `<div class="empty-state"><p>Failed to load recent activity.</p></div>`;
     }
 }
 
@@ -521,9 +434,9 @@ async function loadLinks() {
                 <thead><tr><th>Media</th><th>Platform</th><th>URL</th><th>Tags</th><th>Status</th><th>Actions</th></tr></thead>
                 <tbody>
                     ${items.map((r) => {
-                        const mediaName = r.media_id ? (allMedia.find(m => m.id === r.media_id)?.media_name || '') : '';
+                        const mediaName = allMedia.find(m => m.id === r.media_id)?.media_name || `#${r.media_id}`;
                         return `<tr>
-                            <td>${mediaName ? escapeHtml(mediaName) : '<em style="color:var(--text-muted)">—</em>'}</td>
+                            <td>${escapeHtml(mediaName)}</td>
                             <td><span class="badge badge-proceed">${escapeHtml(r.platform)}</span></td>
                             <td><a href="${escapeHtml(r.url)}" target="_blank" style="color:var(--info);font-size:.78rem">${escapeHtml(r.url.length > 40 ? r.url.substring(0, 40) + '...' : r.url)}</a></td>
                             <td>${renderTags(r.tags)}</td>
@@ -623,8 +536,7 @@ document.addEventListener("click", (e) => {
 
 async function saveLink() {
     const id = document.getElementById("linkEditId").value;
-    const mediaIdVal = document.getElementById("fLinkMediaId").value;
-    const mediaId = mediaIdVal ? parseInt(mediaIdVal) : null;
+    const mediaId = parseInt(document.getElementById("fLinkMediaId").value);
     const payload = {
         media_id: mediaId,
         platform: document.getElementById("fLinkPlatform").value,
@@ -634,6 +546,7 @@ async function saveLink() {
         link_category: document.getElementById("fLinkMediaCategory").value || null,
         tags: document.getElementById("fLinkTags").value.trim() || null,
     };
+    if (!payload.media_id) { toast("Select a media item.", "error"); return; }
     if (!payload.url) { toast("URL is required.", "error"); return; }
     try {
         if (id) {
@@ -711,10 +624,10 @@ async function loadStatuses() {
                 <tbody>
                     ${filtered.map((r) => {
                         const media = allMedia.find(m => m.id === r.media_id);
-                        const mediaName = r.media_id ? (media?.media_name || '') : '';
+                        const mediaName = media?.media_name || `#${r.media_id}`;
                         const mediaCat = media?.media_category || "—";
                         return `<tr>
-                            <td><strong>${mediaName ? escapeHtml(mediaName) : '<em style="color:var(--text-muted)">—</em>'}</strong></td>
+                            <td><strong>${escapeHtml(mediaName)}</strong></td>
                             <td><span class="badge badge-proceed">${escapeHtml(mediaCat)}</span></td>
                             <td><span class="badge badge-${r.status}">${r.status.replace("_", " ")}</span></td>
                             <td>${renderTags(r.tags)}</td>
@@ -725,7 +638,7 @@ async function loadStatuses() {
                                 <button class="btn-outline" style="padding:3px 7px;font-size:.68rem" onclick="duplicateStatus(${r.id})">📋</button>
                                 <button class="btn-danger" style="padding:3px 7px;font-size:.68rem" onclick="deleteStatus(${r.id})">🗑</button>
                             </td>
-                        </tr>`;a
+                        </tr>`;
                     }).join("")}
                 </tbody>
             </table>
@@ -765,17 +678,15 @@ async function editStatus(item) {
     if (!allStatusDefs.length) await loadStatusDefinitions();
     if (!allStatusDefs.length) { try { await api("/status-definitions/seed", { method: "POST" }); await loadStatusDefinitions(); } catch (_) {} }
     populateStatusDropdown("fStatusValue", "status_tracking");
-    const media = item.media_id ? allMedia.find(m => m.id === item.media_id) : null;
+    const media = allMedia.find(m => m.id === item.media_id);
     document.getElementById("statusEditId").value = item.id;
     document.getElementById("fStatusMediaSearch").value = media ? media.media_name : "";
-    document.getElementById("fStatusMediaId").value = item.media_id || "";
+    document.getElementById("fStatusMediaId").value = item.media_id;
     document.getElementById("fStatusMediaCategory").value = media ? media.media_category : "";
     document.getElementById("fStatusValue").value = item.status;
     document.getElementById("fStatusTags").value = item.tags || "";
     document.getElementById("fStatusNotes").value = item.notes || "";
     document.getElementById("statusMediaSearchDropdown").classList.remove("show");
-    document.getElementById("statusLinkInfo").style.display = "none";
-    document.getElementById("statusLinkDetails").innerHTML = "";
     document.getElementById("statusModalTitle").textContent = "Edit Status";
     document.getElementById("statusModal").classList.add("open");
 }
@@ -854,13 +765,14 @@ async function createNewMediaFromStatus() {
 async function saveStatus() {
     const id = document.getElementById("statusEditId").value;
     const mediaIdRaw = document.getElementById("fStatusMediaId").value;
-    const mediaId = mediaIdRaw ? parseInt(mediaIdRaw) : null;
+    const mediaId = parseInt(mediaIdRaw);
     const payload = {
         media_id: mediaId,
         status: document.getElementById("fStatusValue").value,
         tags: document.getElementById("fStatusTags").value.trim() || null,
         notes: document.getElementById("fStatusNotes").value.trim() || null,
     };
+    if (!mediaIdRaw || isNaN(mediaId)) { toast("Search and select a media item.", "error"); return; }
     if (!payload.status) { toast("Please select a status.", "error"); return; }
     try {
         if (id) {
@@ -1276,9 +1188,7 @@ async function importExcel(type, input) {
         data._elapsed = elapsed;
         data._historyId = data.import_history_id;
         showImportResults(type, file.name, data);
-        // Always refresh allMedia since imports can auto-create media entries
-        await loadAllMedia();
-        if (type === "media") { loadMediaPage(); }
+        if (type === "media") { loadMediaPage(); loadAllMedia(); }
         else if (type === "links") { loadLinks(); }
         else if (type === "status") { loadStatuses(); }
     } catch (e) { toast("Import failed: " + e.message, "error"); }

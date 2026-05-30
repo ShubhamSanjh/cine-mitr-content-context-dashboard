@@ -140,9 +140,9 @@ def export_links_excel(
     style_header(ws, headers)
 
     for row, lnk in enumerate(items, 2):
-        media = media_map.get(lnk.media_id) if lnk.media_id else None
+        media = media_map.get(lnk.media_id)
         ws.cell(row=row, column=1, value=lnk.id)
-        ws.cell(row=row, column=2, value=media.media_name if media else "")
+        ws.cell(row=row, column=2, value=media.media_name if media else f"#{lnk.media_id}")
         ws.cell(row=row, column=3, value=media.media_category if media else "")
         ws.cell(row=row, column=4, value=lnk.platform)
         ws.cell(row=row, column=5, value=lnk.url)
@@ -167,9 +167,9 @@ def export_status_excel(db: Session = Depends(get_db)):
     style_header(ws, headers)
 
     for row, s in enumerate(items, 2):
-        media = media_map.get(s.media_id) if s.media_id else None
+        media = media_map.get(s.media_id)
         ws.cell(row=row, column=1, value=s.id)
-        ws.cell(row=row, column=2, value=media.media_name if media else "")
+        ws.cell(row=row, column=2, value=media.media_name if media else f"#{s.media_id}")
         ws.cell(row=row, column=3, value=media.media_category if media else "")
         ws.cell(row=row, column=4, value=s.status)
         ws.cell(row=row, column=5, value=s.notes or "")
@@ -475,13 +475,26 @@ async def import_links_excel(file: UploadFile = File(...), db: Session = Depends
                 "url": url_raw,
             }
 
+            if not media_name_raw:
+                errors.append({"row": i, "data": row_data, "issue": "media_name is required", "issue_type": "missing_field"})
+                continue
             if not url_raw:
                 errors.append({"row": i, "data": row_data, "issue": "URL is required", "issue_type": "missing_field"})
                 continue
 
-            media = None
-            if media_name_raw:
-                media = media_map.get(media_name_raw.lower()) or media_map.get(media_name_raw.title().lower())
+            media = media_map.get(media_name_raw.lower()) or media_map.get(media_name_raw.title().lower())
+
+            # Auto-create media entry if not found
+            if not media:
+                category_to_use = media_category_raw if media_category_raw else "uncategorized"
+                new_media = MediaContent(
+                    media_category=category_to_use,
+                    media_name=media_name_raw.title(),
+                )
+                db.add(new_media)
+                db.flush()  # Get ID without full commit
+                media = new_media
+                media_map[media_name_raw.lower()] = media  # Cache for next rows
 
             # Check against DB existing URLs
             if url_raw in existing_urls:
@@ -494,12 +507,12 @@ async def import_links_excel(file: UploadFile = File(...), db: Session = Depends
                 continue
 
             record = MediaLink(
-                media_id=media.id if media else None,
+                media_id=media.id,
                 platform=platform_raw,
                 url=url_raw,
                 description=description_raw,
                 link_status=link_status_raw,
-                link_category=media.media_category if media else (media_category_raw or None),
+                link_category=media.media_category,
             )
             pending_records.append(record)
             seen_urls.add(url_raw)
@@ -575,16 +588,20 @@ async def import_status_excel(file: UploadFile = File(...), db: Session = Depend
                 "notes": str(row[2]).strip() if len(row) > 2 and row[2] else "",
             }
 
+            if not media_name_raw:
+                errors.append({"row": i, "data": row_data, "issue": "media_name is required", "issue_type": "missing_field"})
+                continue
             if not status_raw:
                 errors.append({"row": i, "data": row_data, "issue": "status is required", "issue_type": "missing_field"})
                 continue
 
-            media = None
-            if media_name_raw:
-                media = media_map.get(media_name_raw.lower()) or media_map.get(media_name_raw.title().lower())
+            media = media_map.get(media_name_raw.lower()) or media_map.get(media_name_raw.title().lower())
+            if not media:
+                errors.append({"row": i, "data": row_data, "issue": f"Media '{media_name_raw}' not found. Create it first.", "issue_type": "reference_missing"})
+                continue
 
             record = MediaStatus(
-                media_id=media.id if media else None,
+                media_id=media.id,
                 status=status_raw,
                 notes=str(row[2]).strip() if len(row) > 2 and row[2] else None,
             )
@@ -626,69 +643,69 @@ async def import_status_excel(file: UploadFile = File(...), db: Session = Depend
     }
 
 
-# ==================== FULL EXPORT (Template-compatible tabs) ====================
+# ==================== FULL EXPORT (Category + Tags tabs) ====================
 
-@router.get("/export/full", summary="Export all data as re-importable template format")
+@router.get("/export/full", summary="Export all data with category tabs and tags sheet")
 def export_full_excel(db: Session = Depends(get_db)):
-    """
-    Export all data in a workbook with 3 tabs matching the import templates:
-    - Media (same columns as media import template)
-    - Links (same columns as links import template)
-    - Status (same columns as status import template)
+    """Export all media in a workbook with separate sheets per category + a Tags summary sheet."""
+    all_media = db.query(MediaContent).order_by(MediaContent.updated_at.desc()).all()
 
-    This file can be shared and re-imported on another deployment without seed data.
-    """
     wb = Workbook()
     wb.remove(wb.active)  # Remove default sheet
 
-    # --- Tab 1: Media (matches media import template) ---
-    all_media = db.query(MediaContent).order_by(MediaContent.media_category, MediaContent.media_name).all()
-    ws_media = wb.create_sheet(title="Media")
-    media_headers = ["media_category", "media_name", "release_date", "genre", "director", "cast_members", "rating", "review", "is_available", "available_on"]
-    style_header(ws_media, media_headers)
+    # Group by category
+    categories = {}
+    for m in all_media:
+        categories.setdefault(m.media_category, []).append(m)
 
-    for row, m in enumerate(all_media, 2):
-        ws_media.cell(row=row, column=1, value=m.media_category or "")
-        ws_media.cell(row=row, column=2, value=m.media_name or "")
-        ws_media.cell(row=row, column=3, value=str(m.release_date) if m.release_date else "")
-        ws_media.cell(row=row, column=4, value=m.genre or "")
-        ws_media.cell(row=row, column=5, value=m.director or "")
-        ws_media.cell(row=row, column=6, value=m.cast_members or "")
-        ws_media.cell(row=row, column=7, value=m.rating)
-        ws_media.cell(row=row, column=8, value=m.review or "")
-        ws_media.cell(row=row, column=9, value=m.is_available or "false")
-        ws_media.cell(row=row, column=10, value=m.available_on or "")
-    auto_width(ws_media)
+    headers = ["ID", "Name", "Release Date", "Genre", "Director", "Cast", "Rating", "Review", "Tags", "Is Available", "Available On", "Updated At"]
 
-    # --- Tab 2: Links (matches links import template) ---
-    all_links = db.query(MediaLink).order_by(MediaLink.created_at.desc()).all()
-    media_map = {m.id: m for m in all_media}
-    ws_links = wb.create_sheet(title="Links")
-    links_headers = ["media_name", "media_category", "platform", "url", "description", "link_status"]
-    style_header(ws_links, links_headers)
+    for cat, items in categories.items():
+        ws = wb.create_sheet(title=cat.capitalize()[:31])
+        style_header(ws, headers)
+        for row, m in enumerate(items, 2):
+            ws.cell(row=row, column=1, value=m.id)
+            ws.cell(row=row, column=2, value=m.media_name)
+            ws.cell(row=row, column=3, value=str(m.release_date) if m.release_date else "")
+            ws.cell(row=row, column=4, value=m.genre or "")
+            ws.cell(row=row, column=5, value=m.director or "")
+            ws.cell(row=row, column=6, value=m.cast_members or "")
+            ws.cell(row=row, column=7, value=m.rating)
+            ws.cell(row=row, column=8, value=m.review or "")
+            ws.cell(row=row, column=9, value=m.tags or "")
+            ws.cell(row=row, column=10, value=m.is_available or "false")
+            ws.cell(row=row, column=11, value=m.available_on or "")
+            ws.cell(row=row, column=12, value=str(m.updated_at) if m.updated_at else "")
+        auto_width(ws)
 
-    for row, lnk in enumerate(all_links, 2):
-        media = media_map.get(lnk.media_id) if lnk.media_id else None
-        ws_links.cell(row=row, column=1, value=media.media_name if media else "")
-        ws_links.cell(row=row, column=2, value=media.media_category if media else "")
-        ws_links.cell(row=row, column=3, value=lnk.platform or "")
-        ws_links.cell(row=row, column=4, value=lnk.url or "")
-        ws_links.cell(row=row, column=5, value=lnk.description or "")
-        ws_links.cell(row=row, column=6, value=lnk.link_status or "active")
-    auto_width(ws_links)
+    # Tags summary sheet
+    tag_counts = {}
+    for m in all_media:
+        if m.tags:
+            for tag in m.tags.split(","):
+                tag = tag.strip()
+                if tag:
+                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
 
-    # --- Tab 3: Status (matches status import template) ---
-    all_statuses = db.query(MediaStatus).order_by(MediaStatus.created_at.desc()).all()
-    ws_status = wb.create_sheet(title="Status")
-    status_headers = ["media_name", "status", "notes"]
-    style_header(ws_status, status_headers)
+    ws_tags = wb.create_sheet(title="Tags")
+    tag_headers = ["Tag", "Count", "Media Names"]
+    style_header(ws_tags, tag_headers)
 
-    for row, s in enumerate(all_statuses, 2):
-        media = media_map.get(s.media_id) if s.media_id else None
-        ws_status.cell(row=row, column=1, value=media.media_name if media else "")
-        ws_status.cell(row=row, column=2, value=s.status or "")
-        ws_status.cell(row=row, column=3, value=s.notes or "")
-    auto_width(ws_status)
+    # Build tag -> media names mapping
+    tag_media = {}
+    for m in all_media:
+        if m.tags:
+            for tag in m.tags.split(","):
+                tag = tag.strip()
+                if tag:
+                    tag_media.setdefault(tag, []).append(m.media_name)
+
+    sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)
+    for row, (tag, count) in enumerate(sorted_tags, 2):
+        ws_tags.cell(row=row, column=1, value=tag)
+        ws_tags.cell(row=row, column=2, value=count)
+        ws_tags.cell(row=row, column=3, value=", ".join(tag_media.get(tag, [])))
+    auto_width(ws_tags)
 
     if not wb.sheetnames:
         wb.create_sheet(title="Empty")
